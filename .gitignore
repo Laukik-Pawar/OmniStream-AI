@@ -1,0 +1,11 @@
+﻿# Python and environments
+__pycache__/
+*.py[cod]
+*.class
+venv/
+env/
+
+# Environment & credentials
+.env
+instance/
+*.pickle
