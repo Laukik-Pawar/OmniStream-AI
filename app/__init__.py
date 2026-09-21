@@ -3,23 +3,25 @@ from flask import Flask
 from dotenv import load_dotenv
 from app.config import config_dict
 
-# Load environment variables from .env
 load_dotenv()
 
 def create_app(config_name='default'):
-    """Flask application factory."""
     app = Flask(__name__, instance_relative_config=True)
-    
-    # Load configuration
     app.config.from_object(config_dict[config_name])
 
-    # Ensure the instance folder exists (useful for SQLite or local temp files)
     try:
         os.makedirs(app.instance_path, exist_ok=True)
     except OSError:
         pass
 
-    # A simple health check route to verify the factory is working
+    # ---> ADD THIS BLOCK <---
+    from app.blueprints.auth import auth_bp
+    from app.blueprints.dashboard import dashboard_bp
+    
+    app.register_blueprint(auth_bp, url_prefix='/api/auth')
+    app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
+    # ------------------------
+
     @app.route('/health')
     def health_check():
         return {"status": "healthy", "environment": config_name}
