@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OmniStream-AI | Login</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+    <div class="container mt-5">
+        <div class="row justify-content-center">
+            <div class="col-md-6">
+                <div class="card shadow-sm">
+                    <div class="card-body p-4">
+                        <h3 class="text-center mb-4">OmniStream-AI Connection</h3>
+                        <form id="loginForm">
+                            <div class="mb-3">
+                                <label>Reddit Client ID</label>
+                                <input type="text" class="form-control" id="clientId" required>
+                            </div>
+                            <div class="mb-3">
+                                <label>Reddit Client Secret</label>
+                                <input type="password" class="form-control" id="clientSecret" required>
+                            </div>
+                            <div class="mb-3">
+                                <label>Reddit Username</label>
+                                <input type="text" class="form-control" id="username" required>
+                            </div>
+                            <div class="mb-4">
+                                <label>Reddit Password</label>
+                                <input type="password" class="form-control" id="password" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">Connect to Reddit & Start</button>
+                        </form>
+                        <div id="loginAlert" class="alert alert-danger mt-3 d-none"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = e.target.querySelector('button');
+            btn.innerHTML = 'Connecting...';
+            btn.disabled = true;
+
+            const payload = {
+                reddit_client_id: document.getElementById('clientId').value,
+                reddit_client_secret: document.getElementById('clientSecret').value,
+                reddit_username: document.getElementById('username').value,
+                reddit_password: document.getElementById('password').value
+            };
+
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    window.location.href = '/dashboard';
+                } else {
+                    throw new Error(data.error || 'Authentication failed');
+                }
+            } catch (error) {
+                const alert = document.getElementById('loginAlert');
+                alert.textContent = error.message;
+                alert.classList.remove('d-none');
+                btn.innerHTML = 'Connect to Reddit & Start';
+                btn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
