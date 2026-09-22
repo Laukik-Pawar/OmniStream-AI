@@ -5,8 +5,6 @@ services:
     build: .
     ports:
       - "5000:5000"
-    # extra_hosts:
-    #   - "api-inference.huggingface.co:PASTE_THE_IP_HERE"
     dns:
       - 8.8.8.8
       - 8.8.4.4

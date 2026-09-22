@@ -53,7 +53,8 @@ class MLService:
             logger.warning("HUGGINGFACE_API_TOKEN not set. Falling back to generic labels.")
             return {k: "General" for k in cluster_terms.keys()}
 
-        api_url = "https://api-inference.huggingface.co/models/facebook/bart-large-mnli"
+        # Pointing to the active Hugging Face inference router
+        api_url = "https://router.huggingface.co/hf-inference/models/facebook/bart-large-mnli"
         headers = {"Authorization": f"Bearer {hf_token}"}
         
         possible_labels = [
@@ -76,8 +77,24 @@ class MLService:
                 response = requests.post(api_url, headers=headers, json=payload)
                 if response.status_code == 200:
                     result = response.json()
-                    # The API returns labels sorted by highest probability
-                    cluster_genres[int(cluster_id)] = result['labels'][0]
+                    
+                    # Force the raw API response to print in the terminal
+                    logger.warning(f"HF Raw Response: {result}")
+                    
+                    # The new API wraps the response in a list. 
+                    if isinstance(result, list):
+                        result = result[0]
+                        
+                    # Extract the genre by checking for both the old and new router JSON formats
+                    if 'labels' in result:
+                        cluster_genres[int(cluster_id)] = result['labels'][0]
+                    elif 'label' in result:
+                        cluster_genres[int(cluster_id)] = result['label']
+                    elif 'error' in result:
+                        logger.error(f"HF Model Loading: {result['error']}")
+                        cluster_genres[int(cluster_id)] = "General"
+                    else:
+                        cluster_genres[int(cluster_id)] = "General"
                 else:
                     logger.error(f"HF API Error: {response.text}")
                     cluster_genres[int(cluster_id)] = "General"
