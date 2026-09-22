@@ -14,23 +14,35 @@
                     <div class="card-body p-4">
                         <h3 class="text-center mb-4">OmniStream-AI Connection</h3>
                         <form id="loginForm">
+                            <!-- Reddit Credentials -->
+                            <h6 class="text-muted mb-3">Reddit Configuration</h6>
                             <div class="mb-3">
-                                <label>Reddit Client ID</label>
+                                <label>Client ID</label>
                                 <input type="text" class="form-control" id="clientId" required>
                             </div>
                             <div class="mb-3">
-                                <label>Reddit Client Secret</label>
+                                <label>Client Secret</label>
                                 <input type="password" class="form-control" id="clientSecret" required>
                             </div>
                             <div class="mb-3">
-                                <label>Reddit Username</label>
+                                <label>Username</label>
                                 <input type="text" class="form-control" id="username" required>
                             </div>
                             <div class="mb-4">
-                                <label>Reddit Password</label>
+                                <label>Password</label>
                                 <input type="password" class="form-control" id="password" required>
                             </div>
-                            <button type="submit" class="btn btn-primary w-100">Connect to Reddit & Start</button>
+
+                            <hr class="my-4">
+                            
+                            <!-- YouTube Credentials -->
+                            <h6 class="text-muted mb-3">YouTube Configuration</h6>
+                            <div class="mb-4">
+                                <label>YouTube Data API v3 Key</label>
+                                <input type="password" class="form-control" id="youtubeKey" required>
+                            </div>
+
+                            <button type="submit" class="btn btn-primary w-100">Connect Sources & Start</button>
                         </form>
                         <div id="loginAlert" class="alert alert-danger mt-3 d-none"></div>
                     </div>
@@ -50,7 +62,8 @@
                 reddit_client_id: document.getElementById('clientId').value,
                 reddit_client_secret: document.getElementById('clientSecret').value,
                 reddit_username: document.getElementById('username').value,
-                reddit_password: document.getElementById('password').value
+                reddit_password: document.getElementById('password').value,
+                youtube_api_key: document.getElementById('youtubeKey').value
             };
 
             try {
@@ -70,7 +83,7 @@
                 const alert = document.getElementById('loginAlert');
                 alert.textContent = error.message;
                 alert.classList.remove('d-none');
-                btn.innerHTML = 'Connect to Reddit & Start';
+                btn.innerHTML = 'Connect Sources & Start';
                 btn.disabled = false;
             }
         });
