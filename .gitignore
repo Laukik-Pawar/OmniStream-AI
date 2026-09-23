@@ -10,3 +10,4 @@ env/
 instance/
 *.pickle
 mycred
+client_secret.json

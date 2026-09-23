@@ -23,7 +23,7 @@ def create_app(config_name='default'):
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
     app.register_blueprint(views_bp)
-
+    
     @app.route('/health')
     def health_check():
         return {"status": "healthy", "environment": config_name}
