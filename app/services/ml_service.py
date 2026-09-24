@@ -20,7 +20,7 @@ class MLService:
         texts = [f"{item.get('title', '')} {item.get('content', '')}" for item in content_items]
         
         # 1. Parse timestamps as UTC, then immediately convert to localized Eastern Time
-        utc_timestamps = pd.to_datetime([item.get('timestamp') for item in content_items], utc=True)
+        utc_timestamps = pd.to_datetime([item.get('timestamp') for item in content_items], utc=True, format='ISO8601')
         local_timestamps = utc_timestamps.tz_convert('America/New_York')
         
         # Update the original dictionaries so the UI displays the correct localized time

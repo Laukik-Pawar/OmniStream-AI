@@ -13,6 +13,7 @@ def dashboard():
     # 1. Fetch Reddit Data
     if 'reddit_credentials' in session:
         try:
+            print("DEBUG REDDIT CREDENTIALS:", session['reddit_credentials'], flush=True)
             reddit = RedditService(session['reddit_credentials'])
             content_items.extend(reddit.fetch_upvoted_posts())
         except Exception as e:

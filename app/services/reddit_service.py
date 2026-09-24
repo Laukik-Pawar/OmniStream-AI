@@ -1,73 +1,94 @@
-import praw
-from datetime import datetime, timezone
+import os
 import logging
+from datetime import datetime, timezone
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
-# Set up basic logging for the service
 logger = logging.getLogger(__name__)
 
 class RedditService:
     def __init__(self, credentials: dict):
-        """Initialize the Reddit client with OAuth 2.0 Web App credentials."""
-        try:
-            # Reconstruct the PRAW client using the OAuth refresh_token
-            self.reddit = praw.Reddit(
-                client_id=credentials.get('client_id'),
-                client_secret=credentials.get('client_secret'),
-                refresh_token=credentials.get('refresh_token'),
-                user_agent=credentials.get('user_agent', 'web:omnistream-ai:v1.0')
-            )
-            
-            # Verify the credentials by fetching the authenticated user
-            self.user = self.reddit.user.me()
-            if not self.user:
-                raise ValueError("Reddit authentication failed: Invalid credentials.")
-        except Exception as e:
-            logger.error(f"Failed to initialize RedditService: {e}")
-            raise
+        """Initialize RedditService using Neon PostgreSQL as the primary data store."""
+        self.db_url = os.environ.get('DATABASE_URL')
+        
+        # Map the exact keys your Flask session is currently sending
+        self.user_id = credentials.get('db_user_id') or credentials.get('user_id')
+        self.reddit_username = credentials.get('username') or credentials.get('reddit_username')
+        self.refresh_token = credentials.get('refresh_token')
 
-    def _format_item(self, item, signal_type):
-        """Standardize Reddit models into our unified data format."""
-        # Using timezone.utc to avoid Python 3.12 deprecation warnings on utcfromtimestamp
-        timestamp = datetime.fromtimestamp(item.created_utc, timezone.utc).isoformat().replace('+00:00', 'Z')
-        
-        # Differentiate between a Comment and a Submission (Post)
-        is_comment = isinstance(item, praw.models.Comment)
-        
+        # If user_id is not passed directly, look it up via username or token
+        if not self.user_id and (self.reddit_username or self.refresh_token):
+            self.user_id = self._resolve_user_id()
+
+    def _get_connection(self):
+        """Create a fresh connection to the Neon database."""
+        if not self.db_url:
+            raise ValueError("DATABASE_URL environment variable is missing or empty.")
+        return psycopg2.connect(self.db_url)
+
+    def _resolve_user_id(self):
+        """Resolve the Neon user ID using credentials stored in session."""
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cursor:
+                    if self.reddit_username:
+                        cursor.execute("SELECT id FROM users WHERE reddit_username = %s LIMIT 1;", (self.reddit_username,))
+                    else:
+                        cursor.execute("SELECT id FROM users WHERE reddit_refresh_token = %s LIMIT 1;", (self.refresh_token,))
+                    
+                    row = cursor.fetchone()
+                    return row[0] if row else None
+        except Exception as e:
+            logger.error(f"Failed to resolve user_id from database: {e}")
+            return None
+
+    def _format_db_record(self, row, signal_type="upvoted"):
+        """Standardize database records into the unified template and ML dictionary schema."""
+        raw_ts = row.get('interaction_timestamp')
+        if isinstance(raw_ts, datetime):
+            if raw_ts.tzinfo is None:
+                raw_ts = raw_ts.replace(tzinfo=timezone.utc)
+            timestamp = raw_ts.isoformat().replace('+00:00', 'Z')
+        else:
+            timestamp = str(raw_ts)
+
         return {
-            'source': 'reddit', # Lowercase ensures the Jinja template applies the 'warning' badge
-            'type': 'Comment' if is_comment else 'Submission',
-            'title': item.submission.title if is_comment else item.title,
-            'content': item.body if is_comment else getattr(item, 'selftext', 'Link Post - No Description'),
-            'url': f"https://reddit.com{item.permalink}" if is_comment else item.url,
-            'subreddit': item.subreddit.display_name,
+            'source': 'reddit',
+            'type': 'Submission',
+            'title': row.get('title') or '',
+            'content': row.get('content') or 'Link Post - No Description',
+            'url': row.get('url') or '',
+            'subreddit': row.get('subreddit') or '',
             'timestamp': timestamp,
             'signal': signal_type
         }
 
-    def fetch_history(self, limit=10):
-        """Fetch user's saved and upvoted content."""
-        history = []
-        try:
-            # 1. Fetch saved posts and comments
-            for item in self.user.saved(limit=limit):
-                history.append(self._format_item(item, signal_type="saved"))
-
-            # 2. Fetch upvoted posts and comments
-            for item in self.user.upvoted(limit=limit):
-                history.append(self._format_item(item, signal_type="upvoted"))
-
-        except Exception as e:
-            logger.error(f"Error fetching Reddit history: {e}")
-        
-        return history
-
     def fetch_upvoted_posts(self, limit=25):
-        """Dedicated method called by views.py to feed the ML pipeline."""
+        """Fetch ingested upvoted posts from Neon for the ML pipeline and dashboard."""
+        if not self.user_id:
+            logger.warning("fetch_upvoted_posts called without an identifiable user_id.")
+            return []
+
         content_items = []
         try:
-            for item in self.user.upvoted(limit=limit):
-                content_items.append(self._format_item(item, signal_type="upvoted"))
+            with self._get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    query = """
+                        SELECT reddit_post_id, title, content, url, subreddit, interaction_timestamp
+                        FROM reddit_interactions
+                        WHERE user_id = %s
+                        ORDER BY interaction_timestamp DESC
+                        LIMIT %s;
+                    """
+                    cursor.execute(query, (self.user_id, limit))
+                    rows = cursor.fetchall()
+                    for row in rows:
+                        content_items.append(self._format_db_record(row, signal_type="upvoted"))
         except Exception as e:
-            logger.error(f"Error fetching exclusively upvoted posts: {e}")
-            
+            logger.error(f"Error fetching upvoted posts from Neon: {e}")
+
         return content_items
+
+    def fetch_history(self, limit=10):
+        """Fetch recent interactions from the database for the history view."""
+        return self.fetch_upvoted_posts(limit=limit)
