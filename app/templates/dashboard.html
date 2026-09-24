@@ -4,11 +4,15 @@
     <meta charset="UTF-8">
     <title>OmniStream-AI | Temporal Dashboard</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body class="bg-light">
 <div class="container mt-5">
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2>Temporal Analytics Dashboard</h2>
+        <div>
+            <h2 class="mb-0">Temporal Analytics Dashboard</h2>
+            <small class="text-muted">Multi-platform behavior analysis & ML categorization</small>
+        </div>
         <a href="{{ url_for('auth.status') }}" class="btn btn-outline-secondary btn-sm">Connection Status</a>
     </div>
 
@@ -24,41 +28,124 @@
       {% endif %}
     {% endwith %}
 
-    <!-- Data Rendering -->
     {% if data %}
-        {% for time_block, items in data.items() %}
-            <div class="mb-5">
-                <!-- Category Header (e.g., Morning, Night) -->
-                <h4 class="text-primary border-bottom pb-2 mb-3">{{ time_block | capitalize }}</h4>
-                
-                <div class="row row-cols-1 row-cols-md-3 g-4">
-                    {% for item in items %}
-                        <div class="col">
-                            <!-- Dynamic Card Borders based on API Source -->
-                            <div class="card h-100 shadow-sm border-{{ 'danger' if item.source == 'youtube' else 'warning' }}">
-                                <div class="card-header bg-transparent border-0 pt-3 d-flex justify-content-between align-items-center">
-                                    <span class="badge bg-{{ 'danger' if item.source == 'youtube' else 'warning text-dark' }}">
-                                        {{ item.source | capitalize }}
-                                    </span>
-                                    <small class="text-muted">{{ item.timestamp[:16] if item.timestamp else 'N/A' }}</small>
-                                </div>
-                                <div class="card-body">
-                                    <h6 class="card-title">{{ item.title }}</h6>
-                                    <!-- Truncate long descriptions to maintain uniform card heights -->
-                                    <p class="card-text small text-muted" style="display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;">
-                                        {{ item.content | default('No description available.', true) }}
-                                    </p>
-                                </div>
-                            </div>
+        <!-- Navigation Tabs -->
+        <ul class="nav nav-pills mb-4" id="dashboardTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="temporal-tab" data-bs-toggle="pill" data-bs-target="#temporal-view" type="button" role="tab">
+                    Temporal View
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="genre-tab" data-bs-toggle="pill" data-bs-target="#genre-view" type="button" role="tab">
+                    Genre & Temporal Analysis
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="recommendations-tab" data-bs-toggle="pill" data-bs-target="#recommendations-view" type="button" role="tab">
+                    Recommendations
+                </button>
+            </li>
+        </ul>
+
+        <div class="tab-content" id="dashboardTabsContent">
+            <!-- TAB 1: Temporal View (By Time of Day) -->
+            <div class="tab-pane fade show active" id="temporal-view" role="tabpanel">
+                {% for time_block, items in data.items() %}
+                    <div class="mb-5">
+                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-3">
+                            <h4 class="text-primary mb-0">{{ time_block | capitalize }}</h4>
+                            <span class="badge bg-secondary rounded-pill">{{ items | length }} interactions</span>
                         </div>
-                    {% else %}
-                        <div class="col-12">
-                            <p class="text-muted fst-italic">No interactions recorded for this time block.</p>
+                        
+                        <div class="row row-cols-1 row-cols-md-3 g-4">
+                            {% for item in items %}
+                                <div class="col">
+                                    <div class="card h-100 shadow-sm border-{{ 'danger' if item.source == 'youtube' else 'warning' }}">
+                                        <div class="card-header bg-transparent border-0 pt-3 d-flex justify-content-between align-items-center">
+                                            <div>
+                                                <span class="badge bg-{{ 'danger' if item.source == 'youtube' else 'warning text-dark' }}">
+                                                    {{ item.source | capitalize }}
+                                                </span>
+                                                {% set genre_label = item.genre or item.category or item.label %}
+                                                {% if genre_label %}
+                                                    <span class="badge bg-info text-dark ms-1">{{ genre_label }}</span>
+                                                {% endif %}
+                                            </div>
+                                            <small class="text-muted">{{ item.timestamp[:16] if item.timestamp else 'N/A' }}</small>
+                                        </div>
+                                        <div class="card-body">
+                                            <h6 class="card-title">{{ item.title }}</h6>
+                                            <p class="card-text small text-muted" style="display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;">
+                                                {{ item.content | default('No description available.', true) }}
+                                            </p>
+                                        </div>
+                                        {% if item.url %}
+                                            <div class="card-footer bg-transparent border-0 pt-0 pb-3">
+                                                <a href="{{ item.url }}" target="_blank" class="btn btn-sm btn-outline-primary w-100">View Content</a>
+                                            </div>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            {% else %}
+                                <div class="col-12">
+                                    <p class="text-muted fst-italic">No interactions recorded for this time block.</p>
+                                </div>
+                            {% endfor %}
                         </div>
-                    {% endfor %}
+                    </div>
+                {% endfor %}
+            </div>
+
+            <!-- TAB 2: Genre & Temporal Analysis -->
+            <div class="tab-pane fade" id="genre-view" role="tabpanel">
+                <!-- Stacked Distribution Chart -->
+                <div class="card shadow-sm border-0 mb-4">
+                    <div class="card-body">
+                        <h5 class="card-title mb-1">Genre Distribution Across Time of Day</h5>
+                        <p class="text-muted small mb-4">Visualizing content genre volume across temporal blocks</p>
+                        <div style="position: relative; height: 350px;">
+                            <canvas id="genreTemporalChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Content Breakdown Grouped by Genre -->
+                <div class="mb-4">
+                    <h5 class="border-bottom pb-2 mb-3">Content Categorized by Genre</h5>
+                    <div class="accordion" id="genreAccordion">
+                        <!-- Populated dynamically via JavaScript -->
+                    </div>
                 </div>
             </div>
-        {% endfor %}
+
+            <!-- TAB 3: Recommendations -->
+            <div class="tab-pane fade" id="recommendations-view" role="tabpanel">
+                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-4">
+                    <h4 class="text-primary mb-0">Suggested Content</h4>
+                    <span class="badge bg-success rounded-pill">AI Curated</span>
+                </div>
+                
+                <div class="row row-cols-1 row-cols-md-3 g-4" id="recommendationsContainer">
+                    <!-- Example Placeholder Card -->
+                    <div class="col">
+                        <div class="card h-100 shadow-sm border-success">
+                            <div class="card-header bg-transparent border-0 pt-3">
+                                <span class="badge bg-success">Recommended</span>
+                                <span class="badge bg-info text-dark ms-1">Technology</span>
+                            </div>
+                            <div class="card-body">
+                                <h6 class="card-title">System Design: Event-Driven Architectures</h6>
+                                <p class="card-text small text-muted">Because you frequently engage with AWS and backend engineering content during the Morning.</p>
+                            </div>
+                            <div class="card-footer bg-transparent border-0 pt-0 pb-3">
+                                <button class="btn btn-sm btn-outline-success w-100">Explore</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     {% else %}
         <!-- Empty State -->
         <div class="alert alert-white border text-center py-5 shadow-sm">
@@ -68,6 +155,129 @@
         </div>
     {% endif %}
 </div>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    const dataByTime = {{ data | tojson }};
+
+    if (dataByTime && Object.keys(dataByTime).length > 0) {
+        const timeBlocks = ['night', 'morning', 'afternoon', 'evening'];
+        
+        // Color palette for dynamic genre datasets
+        const palette = [
+            '#0d6efd', '#198754', '#dc3545', '#ffc107', 
+            '#0dcaf0', '#6610f2', '#fd7e14', '#20c997', 
+            '#6f42c1', '#d63384', '#6c757d', '#055160'
+        ];
+
+        // 1. Group items by genre and count occurrences per time block
+        const genreDataMap = {};
+        const genreItemsMap = {};
+
+        timeBlocks.forEach((block, blockIndex) => {
+            const items = dataByTime[block] || [];
+            items.forEach(item => {
+                const genre = item.genre || item.category || item.label || 'Uncategorized';
+                
+                if (!genreDataMap[genre]) {
+                    genreDataMap[genre] = [0, 0, 0, 0];
+                    genreItemsMap[genre] = [];
+                }
+                genreDataMap[genre][blockIndex] += 1;
+                genreItemsMap[genre].push({ ...item, timeBlock: block });
+            });
+        });
+
+        // 2. Build Chart.js datasets
+        const genres = Object.keys(genreDataMap);
+        const datasets = genres.map((genre, idx) => ({
+            label: genre,
+            data: genreDataMap[genre],
+            backgroundColor: palette[idx % palette.length],
+            stack: 'combinedStack'
+        }));
+
+        // Render Stacked Bar Chart
+        const ctx = document.getElementById('genreTemporalChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: ['Night (12am-6am)', 'Morning (6am-12pm)', 'Afternoon (12pm-6pm)', 'Evening (6pm-12am)'],
+                datasets: datasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'top' },
+                    tooltip: { mode: 'index', intersect: false }
+                },
+                scales: {
+                    x: {
+                        stacked: true,
+                        title: { display: true, text: 'Time of Day' }
+                    },
+                    y: {
+                        stacked: true,
+                        beginAtZero: true,
+                        ticks: { stepSize: 1 },
+                        title: { display: true, text: 'Number of Interactions' }
+                    }
+                }
+            }
+        });
+
+        // 3. Render Genre Content Accordion
+        const accordion = document.getElementById('genreAccordion');
+        genres.forEach((genre, idx) => {
+            const items = genreItemsMap[genre];
+            const collapseId = `collapse_${idx}`;
+            const headingId = `heading_${idx}`;
+
+            const itemCards = items.map(item => `
+                <div class="col-md-6 mb-3">
+                    <div class="card h-100 shadow-sm border-light">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <span class="badge bg-${item.source === 'youtube' ? 'danger' : 'warning text-dark'}">
+                                    ${item.source.toUpperCase()}
+                                </span>
+                                <span class="badge bg-secondary text-capitalize">${item.timeBlock}</span>
+                            </div>
+                            <h6 class="card-title text-truncate" title="${item.title}">${item.title}</h6>
+                            <p class="card-text small text-muted" style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
+                                ${item.content || 'No description available.'}
+                            </p>
+                        </div>
+                        ${item.url ? `
+                            <div class="card-footer bg-transparent border-0 pt-0 pb-3">
+                                <a href="${item.url}" target="_blank" class="btn btn-sm btn-outline-secondary w-100">Open Interaction</a>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `).join('');
+
+            const accordionItem = `
+                <div class="accordion-item shadow-sm mb-2 border-0">
+                    <h2 class="accordion-header" id="${headingId}">
+                        <button class="accordion-button ${idx !== 0 ? 'collapsed' : ''}" type="button" data-bs-toggle="collapse" data-bs-target="#${collapseId}">
+                            <strong>${genre}</strong>
+                            <span class="badge bg-primary rounded-pill ms-2">${items.length}</span>
+                        </button>
+                    </h2>
+                    <div id="${collapseId}" class="accordion-collapse collapse ${idx === 0 ? 'show' : ''}" data-bs-parent="#genreAccordion">
+                        <div class="accordion-body bg-light">
+                            <div class="row">
+                                ${itemCards}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            accordion.insertAdjacentHTML('beforeend', accordionItem);
+        });
+    }
+</script>
 </body>
 </html>
