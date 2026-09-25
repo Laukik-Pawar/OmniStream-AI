@@ -119,62 +119,24 @@
                 </div>
             </div>
 
-            <!-- TAB 3: Recommendations -->
+            <!-- TAB 3: Recommendations (INFINITE SCROLL VERSION) -->
+<!-- TAB 3: Recommendations (Genre-Segmented Feeds) -->
             <div class="tab-pane fade" id="recommendations-view" role="tabpanel">
                 <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-4">
-                    <h4 class="text-primary mb-0">New Discoveries</h4>
-                    <span class="badge bg-primary rounded-pill">Live Web Search</span>
+                    <div>
+                        <h4 class="text-primary mb-0">Current Time Feed</h4>
+                        <small class="text-muted">Top interest categories for your <strong id="currentTimeLabel" class="text-primary"></strong> habits.</small>
+                    </div>
+                    <span class="badge bg-primary rounded-pill">Genre Blocks</span>
                 </div>
-                
-                <div class="row row-cols-1 row-cols-md-3 g-4" id="recommendationsContainer">
-                    {% for rec in recommendations %}
-                    <div class="col">
-                        <div class="card h-100 shadow-sm border-primary">
-                            <div class="card-header bg-transparent border-0 pt-3">
-                                <span class="badge bg-primary">For You</span>
-                                <span class="badge bg-info text-dark ms-1">{{ rec.category }}</span>
-                            </div>
-                            <div class="card-body">
-                                <!-- Temporal mapping description -->
-                                <p class="card-text fw-bold text-dark mb-2" style="font-size: 14px;">
-                                    {{ rec.description }}
-                                </p>
-                                
-                                <!-- Render Keywords as Tags -->
-                                <div class="mb-3">
-                                    {% for kw in rec.keywords %}
-                                        <span class="badge bg-secondary me-1">{{ kw }}</span>
-                                    {% endfor %}
-                                </div>
 
-                                <!-- Render New Content from Google CSE -->
-                                <div class="p-2 border rounded bg-light border-primary">
-                                    <small class="text-uppercase text-primary fw-bold" style="font-size: 10px;">Freshly Indexed Content</small>
-                                    <div class="mt-1">
-                                        <h6 class="mb-1" style="font-size: 13px;">
-                                            {{ rec.new_title }}
-                                        </h6>
-                                        <p class="text-muted small mb-0" style="display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;">
-                                            {{ rec.new_snippet }}
-                                        </p>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <div class="card-footer bg-transparent border-0 pt-0 pb-3">
-                                {% if rec.new_url and rec.new_url != '#' %}
-                                    <a href="{{ rec.new_url }}" target="_blank" class="btn btn-sm btn-outline-primary w-100">Read New Content</a>
-                                {% else %}
-                                    <button class="btn btn-sm btn-outline-secondary w-100" disabled>Setup Google CSE API</button>
-                                {% endif %}
-                            </div>
-                        </div>
-                    </div>
-                    {% else %}
-                    <div class="col-12">
-                        <p class="text-muted fst-italic">Not enough data to generate targeted recommendations yet.</p>
-                    </div>
-                    {% endfor %}
+                <!-- Container where distinct genre blocks are dynamically built -->
+                <div id="genreBlocksContainer" class="d-flex flex-column gap-5">
+                    <!-- Genre sections injected via JS -->
+                </div>
+
+                <div id="emptyGenreState" class="text-center py-5 d-none">
+                    <p class="text-muted">No genre clusters recorded for this time block yet.</p>
                 </div>
             </div>
         </div>
@@ -308,6 +270,155 @@
                 </div>
             `;
             accordion.insertAdjacentHTML('beforeend', accordionItem);
+        });
+
+        // ==========================================
+        // TAB 3: INFINITE SCROLL LOGIC
+        // ==========================================
+       // ==========================================
+        // TAB 3: INFINITE SCROLL LOGIC (BLENDED FEED)
+        // ==========================================
+// ==========================================
+        // TAB 3: GENRE-BLOCKED FEEDS
+        // ==========================================
+        const timeKeywords = {{ time_keywords | default({}) | tojson }};
+        const genreBlocksContainer = document.getElementById('genreBlocksContainer');
+        const emptyState = document.getElementById('emptyGenreState');
+        const timeLabel = document.getElementById('currentTimeLabel');
+
+        // Determine active local time block
+        const currentHour = new Date().getHours();
+        let activeBlock = 'Night';
+        if (currentHour >= 6 && currentHour < 12) activeBlock = 'Morning';
+        else if (currentHour >= 12 && currentHour < 18) activeBlock = 'Afternoon';
+        else if (currentHour >= 18) activeBlock = 'Evening';
+
+        timeLabel.textContent = activeBlock;
+
+        const activeGenres = timeKeywords[activeBlock] || [];
+
+        // State trackers for each genre block
+        const genreStates = {};
+
+        function initGenreBlocks() {
+            if (!activeGenres || activeGenres.length === 0) {
+                emptyState.classList.remove('d-none');
+                return;
+            }
+
+            activeGenres.forEach((item, index) => {
+                const sectionId = `genre-feed-${index}`;
+                const loadMoreBtnId = `btn-load-more-${index}`;
+
+                genreStates[index] = {
+                    query: item.query,
+                    genre: item.genre,
+                    offset: 1,
+                    isLoading: false,
+                    maxResults: 30
+                };
+
+                const blockHtml = `
+                    <div class="card shadow-sm border-0 border-top border-primary border-3">
+                        <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                            <div>
+                                <h5 class="mb-0 text-dark">${item.genre}</h5>
+                                <small class="text-muted">Key topics: ${item.query}</small>
+                            </div>
+                            <span class="badge bg-light text-primary border border-primary">${activeBlock} Preference</span>
+                        </div>
+                        <div class="card-body">
+                            <div class="row row-cols-1 row-cols-md-2 g-3" id="${sectionId}">
+                                <!-- Cards injected here -->
+                            </div>
+                        </div>
+                        <div class="card-footer bg-white border-0 text-center pb-3">
+                            <button id="${loadMoreBtnId}" class="btn btn-sm btn-outline-primary px-4" onclick="loadGenreContent(${index})">
+                                Load More ${item.genre}
+                            </button>
+                        </div>
+                    </div>
+                `;
+
+                genreBlocksContainer.insertAdjacentHTML('beforeend', blockHtml);
+
+                // Fetch initial 4 items for this specific genre block
+                loadGenreContent(index);
+            });
+        }
+
+        async function loadGenreContent(index) {
+            const state = genreStates[index];
+            if (!state || state.isLoading || state.offset > state.maxResults) return;
+
+            state.isLoading = true;
+            const container = document.getElementById(`genre-feed-${index}`);
+            const btn = document.getElementById(`btn-load-more-${index}`);
+
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span> Loading...`;
+            }
+
+            try {
+                const response = await fetch(`/api/recommendations?q=${encodeURIComponent(state.query)}&offset=${state.offset}`);
+                const data = await response.json();
+
+                if (!data || data.length === 0) {
+                    if (btn) {
+                        btn.disabled = true;
+                        btn.textContent = 'No More Content';
+                    }
+                    return;
+                }
+
+                data.forEach(item => {
+                    const card = `
+                        <div class="col">
+                            <div class="card h-100 border shadow-sm">
+                                <div class="card-body d-flex flex-column">
+                                    <h6 class="card-title text-truncate" title="${item.title}">${item.title}</h6>
+                                    <p class="card-text small text-muted flex-grow-1" style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
+                                        ${item.snippet}
+                                    </p>
+                                    <a href="${item.link}" target="_blank" class="btn btn-sm btn-outline-secondary mt-2 w-100">Read Source</a>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    container.insertAdjacentHTML('beforeend', card);
+                });
+
+                state.offset += data.length;
+
+                if (state.offset > state.maxResults) {
+                    if (btn) {
+                        btn.disabled = true;
+                        btn.textContent = 'Limit Reached (30 items)';
+                    }
+                } else if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = `Load More ${state.genre}`;
+                }
+            } catch (err) {
+                console.error(`Failed to fetch for ${state.genre}:`, err);
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = 'Retry';
+                }
+            } finally {
+                state.isLoading = false;
+            }
+        }
+
+        // Initialize genre blocks when the Recommendations tab is clicked
+        const recTabBtn = document.querySelector('button[data-bs-target="#recommendations-view"]');
+        let initialized = false;
+        recTabBtn.addEventListener('shown.bs.tab', function () {
+            if (!initialized) {
+                initGenreBlocks();
+                initialized = true;
+            }
         });
     }
 </script>

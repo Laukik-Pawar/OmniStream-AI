@@ -14,6 +14,8 @@ from sklearn.cluster import KMeans
 from scipy.sparse import diags
 from transformers import pipeline
 import logging
+import re
+from sklearn.feature_extraction.text import TfidfVectorizer, ENGLISH_STOP_WORDS
 
 logger = logging.getLogger(__name__)
 
@@ -25,82 +27,116 @@ except Exception as e:
     classifier = None
 
 class MLService:
+
+
     @staticmethod
     def categorize_content(content_items, num_categories=5):
-        """Vectorize combined history via TF-IDF, apply time-decay, and cluster."""
+        """Vectorize full history, but isolate the last 14 days for live web recommendations."""
         if not content_items:
-            return {} # Return empty dict to prevent Jinja errors
+            return {}, {}
 
+        # 1. Parse timestamps and extract text
         texts = [f"{item.get('title', '')} {item.get('content', '')}" for item in content_items]
         
-        # 1. Parse timestamps as UTC, then immediately convert to localized Eastern Time
+        # NEW: Aggressive Text Cleaning (Remove URLs and special characters)
+        clean_texts = [re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE) for text in texts]
+        clean_texts = [re.sub(r'[^\w\s]', ' ', text) for text in clean_texts]
+
         utc_timestamps = pd.to_datetime([item.get('timestamp') for item in content_items], utc=True, format='ISO8601')
         local_timestamps = utc_timestamps.tz_convert('America/New_York')
         
-        # Update the original dictionaries so the UI displays the correct localized time
         for idx, item in enumerate(content_items):
             item['timestamp'] = local_timestamps[idx].strftime('%Y-%m-%d %H:%M')
             
-        # 2. Convert text to numeric features
-        vectorizer = TfidfVectorizer(stop_words='english')
-        X = vectorizer.fit_transform(texts)
+        # NEW: Expand Stop Words to ignore internet metadata
+        custom_junk = [
+            'com', 'www', 'http', 'https', 'video', 'watch', 'post', 
+            'description', 'link', 'youtube', 'reddit', 'album', 'channel'
+        ]
+        combined_stops = list(ENGLISH_STOP_WORDS) + custom_junk
+
+        # 2. Process ALL data for the Temporal and Genre Dashboard Tabs
+        vectorizer = TfidfVectorizer(stop_words=combined_stops, max_features=1000)
+        X = vectorizer.fit_transform(clean_texts)
         
-        # 3. TEMPORAL ANALYTICS: Calculate time decay weights using localized times
         most_recent = max(local_timestamps)
         days_old = np.array([(most_recent - ts).days for ts in local_timestamps])
         
-        # Apply an exponential decay factor (e.g., half-life of 30 days)
         half_life = 30
         decay_weights = np.exp(-np.log(2) * days_old / half_life)
         
-        # Scale the TF-IDF matrix by the temporal weights
         weight_matrix = diags(decay_weights)
         X_weighted = weight_matrix.dot(X)
         
         num_clusters = min(len(texts), num_categories)
         if num_clusters < 1:
-            return {}
+            return {}, {}
 
-        # 4. Apply K-Means clustering on the temporally-adjusted data
         kmeans = KMeans(n_clusters=num_clusters, random_state=42, n_init=5)
         kmeans.fit(X_weighted)
         
         terms = vectorizer.get_feature_names_out()
         cluster_terms = {}
         for i in range(num_clusters):
-            center_terms = kmeans.cluster_centers_[i].argsort()[-5:][::-1]
-            cluster_terms[i] = [terms[idx] for idx in center_terms]
+            # NEW: Filter out numbers and extremely short words from final keywords
+            center_terms = kmeans.cluster_centers_[i].argsort()[::-1]
+            valid_terms = [terms[idx] for idx in center_terms if not terms[idx].isnumeric() and len(terms[idx]) > 2]
+            cluster_terms[i] = valid_terms[:5]
 
-        # 5. REMOTE CLASSIFICATION: Fetch genres using Hugging Face
         cluster_genres = MLService.detect_genres(cluster_terms)
 
-        # 6. INTRADAY ROUTING: Map the localized hour to a specific time block
+        # 3. Setup Temporal Routing
         df = pd.DataFrame({
-            'interaction_hour': local_timestamps.hour, # Correctly extracts localized hour
-            'cluster': kmeans.labels_
+            'interaction_hour': [ts.hour for ts in local_timestamps],
+            'cluster': kmeans.labels_,
+            'timestamp_obj': local_timestamps
         })
         
         bins = [0, 6, 12, 18, 24]
         labels = ['Night', 'Morning', 'Afternoon', 'Evening']
         df['time_of_day'] = pd.cut(df['interaction_hour'], bins=bins, labels=labels, right=False)
         
-        # 7. ASSEMBLE TEMPLATE DATA: Group enriched items by time block
         categorized_data = {label: [] for label in labels}
+        all_time_counts = {label: {} for label in labels}
+        recent_counts = {label: {} for label in labels}
         
+        cutoff_date = pd.Timestamp.now(tz='America/New_York') - pd.Timedelta(days=14)
+
         for idx, item in enumerate(content_items):
             time_block = df['time_of_day'].iloc[idx]
-            cluster_id = df['cluster'].iloc[idx]
+            cluster_id = int(df['cluster'].iloc[idx])
+            ts = df['timestamp_obj'].iloc[idx]
             
-            # Enrich the original item dictionary with ML outputs
-            item['cluster_id'] = int(cluster_id)
-            item['genre'] = cluster_genres.get(int(cluster_id), "General")
+            item['cluster_id'] = cluster_id
+            item['genre'] = cluster_genres.get(cluster_id, "General")
             
-            # Append to the correct time block list
             categorized_data[time_block].append(item)
+            all_time_counts[time_block][cluster_id] = all_time_counts[time_block].get(cluster_id, 0) + 1
             
-        # Filter out empty time blocks so the UI only shows active periods
-        return {k: v for k, v in categorized_data.items() if v}
+            if pd.notna(ts) and ts >= cutoff_date:
+                recent_counts[time_block][cluster_id] = recent_counts[time_block].get(cluster_id, 0) + 1
+            
+        # 4. Extract Keywords specifically for the Recommendations Tab
+        time_keywords = {}
+        for block in labels:
+            counts_to_use = recent_counts[block] if recent_counts[block] else all_time_counts[block]
+            
+            if counts_to_use:
+                top_clusters = sorted(counts_to_use, key=counts_to_use.get, reverse=True)[:3]
+                
+                block_queries = []
+                for cluster_id in top_clusters:
+                    keywords = " ".join(cluster_terms[cluster_id])
+                    genre = cluster_genres.get(cluster_id, "General")
+                    block_queries.append({"query": keywords, "genre": genre})
+                
+                time_keywords[block] = block_queries
+            else:
+                time_keywords[block] = [{"query": "news", "genre": "General"}]
 
+        active_data = {k: v for k, v in categorized_data.items() if v}
+        return active_data, time_keywords
+    
     @staticmethod
     def detect_genres(cluster_terms):
         """Remote zero-shot classification using Hugging Face Serverless API."""
@@ -265,3 +301,37 @@ class MLService:
         except Exception as e:
             logger.error(f"Error in recommendation pipeline: {e}")
             return []
+
+    @staticmethod
+    def fetch_paginated_cse(query, start_index=1, num=5):
+        """Fetches paginated search results dynamically from Google CSE."""
+        api_key = os.environ.get("GOOGLE_CSE_API_KEY")
+        cse_id = os.environ.get("GOOGLE_CSE_ID")
+        
+        if not api_key or not cse_id or not query:
+            return []
+            
+        url = "https://www.googleapis.com/customsearch/v1"
+        params = {
+            "key": api_key,
+            "cx": cse_id,
+            "q": query,
+            "start": start_index,
+            "num": num
+        }
+        
+        try:
+            response = requests.get(url, params=params)
+            if response.status_code == 200:
+                results = response.json().get("items", [])
+                return [{
+                    "title": r.get("title", "Unknown Title"),
+                    "link": r.get("link", "#"),
+                    "snippet": r.get("snippet", "No description available.")
+                } for r in results]
+            else:
+                logger.error(f"CSE API Error: {response.status_code} - {response.text}")
+        except Exception as e:
+            logger.error(f"CSE Paginated Fetch Error: {e}")
+            
+        return []

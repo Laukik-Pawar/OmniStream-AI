@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, session, flash, redirect, url_for
+from flask import Blueprint, render_template, session, flash, redirect, url_for, request, jsonify
 from app.services.youtube_service import YouTubeService
 from app.services.reddit_service import RedditService
 from app.services.ml_service import MLService
@@ -30,13 +30,26 @@ def dashboard():
             session.pop('youtube_credentials', None)
             
     # 3. Process the merged datasets through the ML pipelines
+    time_keywords = {}
     if content_items:
-        categorized_data = MLService.categorize_content(content_items)
-        recommendations = MLService.generate_recommendations(content_items)
+        # categorize_content now returns BOTH the categorized data AND the K-Means keywords
+        categorized_data, time_keywords = MLService.categorize_content(content_items)
     else:
         categorized_data = {}
-        recommendations = []
         flash("No content available. Please connect your accounts.", "info")
 
-    # 4. Render the frontend template
-    return render_template('dashboard.html', data=categorized_data, recommendations=recommendations)
+    # 4. Render the frontend template, passing the time_keywords instead of recommendations
+    return render_template('dashboard.html', data=categorized_data, time_keywords=time_keywords)
+
+@views_bp.route('/api/recommendations')
+def api_recommendations():
+    """Async endpoint to fetch live CSE data for infinite scrolling."""
+    query = request.args.get('q', '')
+    offset = request.args.get('offset', 1, type=int)
+    
+    # Enforce maximum constraints (50 results total, 5 per page)
+    if offset > 46:
+        return jsonify([])
+        
+    results = MLService.fetch_paginated_cse(query, start_index=offset, num=5)
+    return jsonify(results)
