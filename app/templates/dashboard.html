@@ -122,27 +122,59 @@
             <!-- TAB 3: Recommendations -->
             <div class="tab-pane fade" id="recommendations-view" role="tabpanel">
                 <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-4">
-                    <h4 class="text-primary mb-0">Suggested Content</h4>
-                    <span class="badge bg-success rounded-pill">AI Curated</span>
+                    <h4 class="text-primary mb-0">New Discoveries</h4>
+                    <span class="badge bg-primary rounded-pill">Live Web Search</span>
                 </div>
                 
                 <div class="row row-cols-1 row-cols-md-3 g-4" id="recommendationsContainer">
-                    <!-- Example Placeholder Card -->
+                    {% for rec in recommendations %}
                     <div class="col">
-                        <div class="card h-100 shadow-sm border-success">
+                        <div class="card h-100 shadow-sm border-primary">
                             <div class="card-header bg-transparent border-0 pt-3">
-                                <span class="badge bg-success">Recommended</span>
-                                <span class="badge bg-info text-dark ms-1">Technology</span>
+                                <span class="badge bg-primary">For You</span>
+                                <span class="badge bg-info text-dark ms-1">{{ rec.category }}</span>
                             </div>
                             <div class="card-body">
-                                <h6 class="card-title">System Design: Event-Driven Architectures</h6>
-                                <p class="card-text small text-muted">Because you frequently engage with AWS and backend engineering content during the Morning.</p>
+                                <!-- Temporal mapping description -->
+                                <p class="card-text fw-bold text-dark mb-2" style="font-size: 14px;">
+                                    {{ rec.description }}
+                                </p>
+                                
+                                <!-- Render Keywords as Tags -->
+                                <div class="mb-3">
+                                    {% for kw in rec.keywords %}
+                                        <span class="badge bg-secondary me-1">{{ kw }}</span>
+                                    {% endfor %}
+                                </div>
+
+                                <!-- Render New Content from Google CSE -->
+                                <div class="p-2 border rounded bg-light border-primary">
+                                    <small class="text-uppercase text-primary fw-bold" style="font-size: 10px;">Freshly Indexed Content</small>
+                                    <div class="mt-1">
+                                        <h6 class="mb-1" style="font-size: 13px;">
+                                            {{ rec.new_title }}
+                                        </h6>
+                                        <p class="text-muted small mb-0" style="display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;">
+                                            {{ rec.new_snippet }}
+                                        </p>
+                                    </div>
+                                </div>
                             </div>
+                            
                             <div class="card-footer bg-transparent border-0 pt-0 pb-3">
-                                <button class="btn btn-sm btn-outline-success w-100">Explore</button>
+                                {% if rec.new_url and rec.new_url != '#' %}
+                                    <a href="{{ rec.new_url }}" target="_blank" class="btn btn-sm btn-outline-primary w-100">Read New Content</a>
+                                {% else %}
+                                    <button class="btn btn-sm btn-outline-secondary w-100" disabled>Setup Google CSE API</button>
+                                {% endif %}
                             </div>
                         </div>
                     </div>
+                    {% else %}
+                    <div class="col-12">
+                        <p class="text-muted fst-italic">Not enough data to generate targeted recommendations yet.</p>
+                    </div>
+                    {% endfor %}
                 </div>
             </div>
         </div>

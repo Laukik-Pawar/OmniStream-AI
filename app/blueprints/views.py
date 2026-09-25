@@ -29,12 +29,14 @@ def dashboard():
             flash("YouTube session expired. Please log in again.", "danger")
             session.pop('youtube_credentials', None)
             
-    # 3. Process the merged datasets through the temporal analytics pipeline
+    # 3. Process the merged datasets through the ML pipelines
     if content_items:
         categorized_data = MLService.categorize_content(content_items)
+        recommendations = MLService.generate_recommendations(content_items)
     else:
         categorized_data = {}
+        recommendations = []
         flash("No content available. Please connect your accounts.", "info")
 
     # 4. Render the frontend template
-    return render_template('dashboard.html', data=categorized_data)
+    return render_template('dashboard.html', data=categorized_data, recommendations=recommendations)
