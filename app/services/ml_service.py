@@ -5,11 +5,12 @@ os.environ["HF_HOME"] = "/tmp/huggingface_cache"
 # Authenticate the local model download to avoid rate limits and warnings
 if os.environ.get("HUGGINGFACE_API_TOKEN"):
     os.environ["HF_TOKEN"] = os.environ.get("HUGGINGFACE_API_TOKEN")
+    
+import psycopg2
 import requests
 import numpy as np
 from datetime import datetime
 import pandas as pd
-from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import KMeans
 from scipy.sparse import diags
 from transformers import pipeline
@@ -30,15 +31,19 @@ class MLService:
 
 
     @staticmethod
+    @staticmethod
     def categorize_content(content_items, num_categories=5):
         """Vectorize full history, but isolate the last 14 days for live web recommendations."""
         if not content_items:
             return {}, {}
 
-        # 1. Parse timestamps and extract text
+        # 1. Teach the system any unknown specific posts BEFORE starting the math
+        content_items = MLService._learn_and_cache_posts(content_items)
+
+        # 2. Parse timestamps and extract text
         texts = [f"{item.get('title', '')} {item.get('content', '')}" for item in content_items]
         
-        # NEW: Aggressive Text Cleaning (Remove URLs and special characters)
+        # Aggressive Text Cleaning (Remove URLs and special characters)
         clean_texts = [re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE) for text in texts]
         clean_texts = [re.sub(r'[^\w\s]', ' ', text) for text in clean_texts]
 
@@ -48,14 +53,14 @@ class MLService:
         for idx, item in enumerate(content_items):
             item['timestamp'] = local_timestamps[idx].strftime('%Y-%m-%d %H:%M')
             
-        # NEW: Expand Stop Words to ignore internet metadata
+        # Expand Stop Words to ignore internet metadata
         custom_junk = [
             'com', 'www', 'http', 'https', 'video', 'watch', 'post', 
             'description', 'link', 'youtube', 'reddit', 'album', 'channel'
         ]
         combined_stops = list(ENGLISH_STOP_WORDS) + custom_junk
 
-        # 2. Process ALL data for the Temporal and Genre Dashboard Tabs
+        # 3. Process ALL data for the Temporal and Genre Dashboard Tabs
         vectorizer = TfidfVectorizer(stop_words=combined_stops, max_features=1000)
         X = vectorizer.fit_transform(clean_texts)
         
@@ -78,14 +83,14 @@ class MLService:
         terms = vectorizer.get_feature_names_out()
         cluster_terms = {}
         for i in range(num_clusters):
-            # NEW: Filter out numbers and extremely short words from final keywords
             center_terms = kmeans.cluster_centers_[i].argsort()[::-1]
             valid_terms = [terms[idx] for idx in center_terms if not terms[idx].isnumeric() and len(terms[idx]) > 2]
             cluster_terms[i] = valid_terms[:5]
 
-        cluster_genres = MLService.detect_genres(cluster_terms)
+        # Pass content_items to evaluate native genres inside clusters
+        cluster_genres = MLService.detect_genres(cluster_terms, content_items)
 
-        # 3. Setup Temporal Routing
+        # 4. Setup Temporal Routing
         df = pd.DataFrame({
             'interaction_hour': [ts.hour for ts in local_timestamps],
             'cluster': kmeans.labels_,
@@ -108,7 +113,9 @@ class MLService:
             ts = df['timestamp_obj'].iloc[idx]
             
             item['cluster_id'] = cluster_id
-            item['genre'] = cluster_genres.get(cluster_id, "General")
+            
+            # UI OVERRIDE: Use the post's actual AI-classified native genre, falling back to the cluster average
+            item['genre'] = item.get('native_genre') or cluster_genres.get(cluster_id, "General")
             
             categorized_data[time_block].append(item)
             all_time_counts[time_block][cluster_id] = all_time_counts[time_block].get(cluster_id, 0) + 1
@@ -116,7 +123,7 @@ class MLService:
             if pd.notna(ts) and ts >= cutoff_date:
                 recent_counts[time_block][cluster_id] = recent_counts[time_block].get(cluster_id, 0) + 1
             
-        # 4. Extract Keywords specifically for the Recommendations Tab
+        # 5. Extract Keywords specifically for the Recommendations Tab
         time_keywords = {}
         for block in labels:
             counts_to_use = recent_counts[block] if recent_counts[block] else all_time_counts[block]
@@ -138,62 +145,39 @@ class MLService:
         return active_data, time_keywords
     
     @staticmethod
-    def detect_genres(cluster_terms):
-        """Remote zero-shot classification using Hugging Face Serverless API."""
-        if not cluster_terms:
-            return {}
-
-        hf_token = os.getenv("HUGGINGFACE_API_TOKEN")
-        if not hf_token:
-            logger.warning("HUGGINGFACE_API_TOKEN not set. Falling back to generic labels.")
-            return {k: "General" for k in cluster_terms.keys()}
-
-        # Pointing to the active Hugging Face inference router
-        api_url = "https://router.huggingface.co/hf-inference/models/facebook/bart-large-mnli"
-        headers = {"Authorization": f"Bearer {hf_token}"}
+    def detect_genres(cluster_terms, content_items):
+        """
+        Determines genre by first checking native platform categories, 
+        using zero-shot ML only as a fallback.
+        """
+        candidate_labels = ["Technology", "Entertainment", "Education", "Lifestyle", "Finance", "Sports", "Gaming", "Comedy"]
         
-        possible_labels = [
-            "Technology", "Entertainment", "Sports", "Education", "News", 
-            "Health", "Business", "Lifestyle", "Science", "Travel", "Finance", "Gaming"
-        ]
-
         cluster_genres = {}
+        
+        # Create a mapping of which items belong to which cluster
+        # (Assuming 'content_items' now includes the assigned 'cluster_id' from K-Means)
+        
         for cluster_id, terms in cluster_terms.items():
-            if not terms:
-                continue
+            # Find all items in this specific cluster
+            items_in_cluster = [item for item in content_items if item.get('cluster_id') == cluster_id]
             
-            text_to_classify = " ".join(str(t) for t in terms)
-            payload = {
-                "inputs": text_to_classify,
-                "parameters": {"candidate_labels": possible_labels}
-            }
-
-            try:
-                response = requests.post(api_url, headers=headers, json=payload)
-                if response.status_code == 200:
-                    result = response.json()
-                    
-                    logger.warning(f"HF Raw Response: {result}")
-                    
-                    if isinstance(result, list):
-                        result = result[0]
-                        
-                    if 'labels' in result:
-                        cluster_genres[int(cluster_id)] = result['labels'][0]
-                    elif 'label' in result:
-                        cluster_genres[int(cluster_id)] = result['label']
-                    elif 'error' in result:
-                        logger.error(f"HF Model Loading: {result['error']}")
-                        cluster_genres[int(cluster_id)] = "General"
-                    else:
-                        cluster_genres[int(cluster_id)] = "General"
+            # Extract all native genres provided by YouTube/Reddit for this cluster
+            native_genres = [item['native_genre'] for item in items_in_cluster if item.get('native_genre')]
+            
+            # If the platforms strongly agree on a category, use it!
+            if native_genres:
+                # Get the most common native genre in this cluster
+                most_common_genre = max(set(native_genres), key=native_genres.count)
+                cluster_genres[cluster_id] = most_common_genre
+            else:
+                # FALLBACK: If no native metadata exists, ask the zero-shot ML model
+                cluster_profile = " ".join(terms)
+                if classifier:
+                    result = classifier(cluster_profile, candidate_labels)
+                    cluster_genres[cluster_id] = result['labels'][0]
                 else:
-                    logger.error(f"HF API Error: {response.text}")
-                    cluster_genres[int(cluster_id)] = "General"
-            except Exception as e:
-                logger.error(f"Error connecting to HF API: {e}")
-                cluster_genres[int(cluster_id)] = "General"
-
+                    cluster_genres[cluster_id] = "General"
+                    
         return cluster_genres
 
     @staticmethod
@@ -335,3 +319,56 @@ class MLService:
             logger.error(f"CSE Paginated Fetch Error: {e}")
             
         return []
+    
+    @staticmethod
+    def _learn_and_cache_posts(content_items):
+        """Classifies individual posts using both subreddit and title context, caching by URL."""
+        candidate_labels = ["Technology", "Entertainment", "Education", "Lifestyle", "Finance", "Sports", "Gaming", "Comedy", "Science"]
+        
+        # 1. Identify which specific posts have no native_genre yet
+        unknown_posts = [item for item in content_items if item.get('source') == 'reddit' and not item.get('native_genre')]
+                    
+        if not unknown_posts:
+            return content_items
+            
+        # 2. Use zero-shot AI to classify each specific post
+        new_mappings = {}
+        for item in unknown_posts:
+            sub = item.get('subreddit', '').replace('r/', '')
+            title = item.get('title', '')
+            post_url = item.get('url')
+            
+            if not post_url:
+                continue
+                
+            # Combine both elements to ensure context alignment
+            prompt = f"Subreddit: {sub}. Post Title: {title}"
+            
+            if classifier:
+                result = classifier(prompt, candidate_labels)
+                new_mappings[post_url] = result['labels'][0]
+            else:
+                new_mappings[post_url] = "General"
+                
+        # 3. Permanently write these new discoveries to the database
+        db_url = os.environ.get('DATABASE_URL')
+        if db_url and new_mappings:
+            try:
+                with psycopg2.connect(db_url) as conn:
+                    with conn.cursor() as cursor:
+                        for url, genre in new_mappings.items():
+                            cursor.execute("""
+                                INSERT INTO post_genres (post_url, genre) 
+                                VALUES (%s, %s) ON CONFLICT (post_url) DO NOTHING;
+                            """, (url, genre))
+                    conn.commit() 
+            except Exception as e:
+                print(f"Failed to cache new posts: {e}")
+                
+        # 4. Apply the newly learned genres back to the current request
+        for item in unknown_posts:
+            post_url = item.get('url')
+            if post_url in new_mappings:
+                item['native_genre'] = new_mappings[post_url]
+                
+        return content_items

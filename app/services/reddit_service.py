@@ -6,6 +6,17 @@ from psycopg2.extras import RealDictCursor
 
 logger = logging.getLogger(__name__)
 
+# Map popular subreddits to your dashboard's master candidate labels.
+REDDIT_GENRE_MAP = {
+    "technology": "Technology", "programming": "Technology", "dataengineering": "Technology", "python": "Technology",
+    "movies": "Entertainment", "television": "Entertainment", "bollywood": "Entertainment",
+    "personalfinance": "Finance", "wallstreetbets": "Finance", "investing": "Finance",
+    "gaming": "Gaming", "pcgaming": "Gaming", "boardgames": "Gaming",
+    "funny": "Comedy", "jokes": "Comedy", "memes": "Comedy",
+    "science": "Science", "askscience": "Education",
+    "nba": "Sports", "soccer": "Sports", "cricket": "Sports"
+}
+
 class RedditService:
     def __init__(self, credentials: dict):
         """Initialize RedditService using Neon PostgreSQL as the primary data store."""
@@ -52,19 +63,33 @@ class RedditService:
         else:
             timestamp = str(raw_ts)
 
+        # EXTRACT NATIVE GENRE FROM SUBREDDIT
+        raw_subreddit = row.get('subreddit') or ''
+        # Clean the string in case it includes "r/" prefix
+        clean_sub = raw_subreddit.lower().replace('r/', '') 
+        
+        official_genre = REDDIT_GENRE_MAP.get(clean_sub)
+        
+        # Fallback: Capitalize the subreddit name if it isn't in our hardcoded list
+        if not official_genre and clean_sub:
+            official_genre = clean_sub.capitalize()
+        elif not official_genre:
+            official_genre = "General"
+
         return {
             'source': 'reddit',
             'type': 'Submission',
             'title': row.get('title') or '',
             'content': row.get('content') or 'Link Post - No Description',
             'url': row.get('url') or '',
-            'subreddit': row.get('subreddit') or '',
+            'subreddit': raw_subreddit,
             'timestamp': timestamp,
-            'signal': signal_type
+            'signal': signal_type,
+            'native_genre': official_genre  # Expose to ML pipeline
         }
 
     def fetch_upvoted_posts(self, limit=25):
-        """Fetch ingested upvoted posts from Neon for the ML pipeline and dashboard."""
+        """Fetch ingested upvoted posts and join with known post-level genres."""
         if not self.user_id:
             logger.warning("fetch_upvoted_posts called without an identifiable user_id.")
             return []
@@ -73,22 +98,27 @@ class RedditService:
         try:
             with self._get_connection() as conn:
                 with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    # LEFT JOIN now checks if we have classified this exact post before
                     query = """
-                        SELECT reddit_post_id, title, content, url, subreddit, interaction_timestamp
-                        FROM reddit_interactions
-                        WHERE user_id = %s
-                        ORDER BY interaction_timestamp DESC
+                        SELECT r.reddit_post_id, r.title, r.content, r.url, 
+                               r.subreddit, r.interaction_timestamp, pg.genre as known_genre
+                        FROM reddit_interactions r
+                        LEFT JOIN post_genres pg ON r.url = pg.post_url
+                        WHERE r.user_id = %s
+                        ORDER BY r.interaction_timestamp DESC
                         LIMIT %s;
                     """
                     cursor.execute(query, (self.user_id, limit))
                     rows = cursor.fetchall()
                     for row in rows:
-                        content_items.append(self._format_db_record(row, signal_type="upvoted"))
+                        item = self._format_db_record(row, signal_type="upvoted")
+                        item['native_genre'] = row.get('known_genre') 
+                        content_items.append(item)
         except Exception as e:
             logger.error(f"Error fetching upvoted posts from Neon: {e}")
 
         return content_items
-
+    
     def fetch_history(self, limit=10):
         """Fetch recent interactions from the database for the history view."""
         return self.fetch_upvoted_posts(limit=limit)
