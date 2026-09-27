@@ -30,7 +30,7 @@ class RecommendationService:
                     q=query_text, 
                     cx=cse_id, 
                     num=num_results_per_query,
-                    safe="active"
+                    safe="off"
                 ).execute()
                 
                 for item in res.get('items', []):
@@ -46,6 +46,7 @@ class RecommendationService:
                         'snippet': item.get('snippet', ''),
                         'source_domain': item.get('displayLink', 'Web'),
                         'genre': genre,
+                        'matched_query': query_text,  # <-- THIS IS THE FIX
                         'image_url': thumbnail_url
                     })
                     
