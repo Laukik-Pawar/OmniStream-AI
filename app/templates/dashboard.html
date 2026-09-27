@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <title>OmniStream-AI | Temporal Dashboard</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Added Bootstrap Icons for the search magnifying glass -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body class="bg-light">
@@ -119,24 +121,83 @@
                 </div>
             </div>
 
-            <!-- TAB 3: Recommendations (INFINITE SCROLL VERSION) -->
-<!-- TAB 3: Recommendations (Genre-Segmented Feeds) -->
+            <!-- TAB 3: Recommendations (Genre-Segmented Feeds) -->
             <div class="tab-pane fade" id="recommendations-view" role="tabpanel">
                 <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-4">
                     <div>
                         <h4 class="text-primary mb-0">Current Time Feed</h4>
-                        <small class="text-muted">Top interest categories for your <strong id="currentTimeLabel" class="text-primary"></strong> habits.</small>
+                        <small class="text-muted">Top interest categories for your <strong class="text-primary">{{ current_block }}</strong> habits.</small>
                     </div>
                     <span class="badge bg-primary rounded-pill">Genre Blocks</span>
                 </div>
 
-                <!-- Container where distinct genre blocks are dynamically built -->
-                <div id="genreBlocksContainer" class="d-flex flex-column gap-5">
-                    <!-- Genre sections injected via JS -->
-                </div>
+                <!-- Container where distinct genre blocks are dynamically built via Jinja -->
+                <div class="d-flex flex-column gap-5">
+                    {% if ranked_genres %}
+                        <!-- Iterate through genres in mathematically sorted order -->
+                        {% for genre in ranked_genres %}
+                            
+                            <!-- 1. Extract search query for this genre -->
+                            {% set matched_query = time_keywords[current_block] | selectattr('genre', 'equalto', genre) | first %}
+                            {% set search_query = matched_query.query if matched_query else '' %}
+                            
+                            <!-- 2. Filter the live results to only show items matching the current genre -->
+                            {% set genre_items = recommendations | selectattr("genre", "equalto", genre) | list %}
+                            
+                            {% if genre_items %}
+                                <div class="genre-section mt-4">
+                                    <div class="mb-3">
+                                        <!-- Highlight the top-ranked genre differently than the rest -->
+                                        {% if loop.first %}
+                                            <h5 class="mb-0 fw-bold" style="color: #ff4500;">🔥 Top Interest: {{ genre }}</h5>
+                                        {% else %}
+                                            <h5 class="mb-0 text-secondary">{{ genre }}</h5>
+                                        {% endif %}
+                                        
+                                        <!-- Display the AI-generated search keywords -->
+                                        <small class="text-muted">
+                                            <i class="bi bi-search"></i> <strong>Search parameters:</strong> {{ search_query }}
+                                        </small>
+                                    </div>
 
-                <div id="emptyGenreState" class="text-center py-5 d-none">
-                    <p class="text-muted">No genre clusters recorded for this time block yet.</p>
+                                    <!-- Horizontal scrollable card grid -->
+                                    <div class="d-flex gap-3 overflow-auto pb-2 genre-scroll-track" 
+                                         data-query="{{ search_query }}" 
+                                         data-offset="4" 
+                                         style="scrollbar-width: thin;">
+                                         
+                                        {% for item in genre_items %}
+                                            <div class="card shadow-sm flex-shrink-0" style="width: 280px; border-radius: 8px;">
+                                                {% if item.image_url %}
+                                                    <img src="{{ item.image_url }}" class="card-img-top" alt="Preview" style="height: 140px; object-fit: cover; border-top-left-radius: 8px; border-top-right-radius: 8px;">
+                                                {% endif %}
+                                                <div class="card-body d-flex flex-column">
+                                                    <h6 class="card-title" style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 0.95rem;">
+                                                        <a href="{{ item.url }}" target="_blank" class="text-decoration-none text-dark">{{ item.title }}</a>
+                                                    </h6>
+                                                    <p class="card-text small text-muted" style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
+                                                        {{ item.snippet }}
+                                                    </p>
+                                                    <div class="mt-auto">
+                                                        <span class="badge bg-light text-dark border">{{ item.source_domain }}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        {% endfor %}
+
+                                        <!-- Infinite Scroll Trigger / Spinner -->
+                                        <div class="scroll-trigger flex-shrink-0 d-flex align-items-center justify-content-center" style="width: 50px;">
+                                            <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            {% endif %}
+                        {% endfor %}
+                    {% else %}
+                        <div class="text-center py-5">
+                            <p class="text-muted">No genre clusters recorded for this time block yet.</p>
+                        </div>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -273,152 +334,73 @@
         });
 
         // ==========================================
-        // TAB 3: INFINITE SCROLL LOGIC
+        // TAB 3: HORIZONTAL INFINITE SCROLL LOGIC
         // ==========================================
-       // ==========================================
-        // TAB 3: INFINITE SCROLL LOGIC (BLENDED FEED)
-        // ==========================================
-// ==========================================
-        // TAB 3: GENRE-BLOCKED FEEDS
-        // ==========================================
-        const timeKeywords = {{ time_keywords | default({}) | tojson }};
-        const genreBlocksContainer = document.getElementById('genreBlocksContainer');
-        const emptyState = document.getElementById('emptyGenreState');
-        const timeLabel = document.getElementById('currentTimeLabel');
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const trigger = entry.target;
+                    const track = trigger.closest('.genre-scroll-track');
+                    
+                    const query = track.getAttribute('data-query');
+                    let offset = parseInt(track.getAttribute('data-offset'));
 
-        // Determine active local time block
-        const currentHour = new Date().getHours();
-        let activeBlock = 'Night';
-        if (currentHour >= 6 && currentHour < 12) activeBlock = 'Morning';
-        else if (currentHour >= 12 && currentHour < 18) activeBlock = 'Afternoon';
-        else if (currentHour >= 18) activeBlock = 'Evening';
+                    if (offset > 46 || !query) {
+                        trigger.style.display = 'none'; 
+                        return;
+                    }
 
-        timeLabel.textContent = activeBlock;
+                    fetch(`/api/recommendations?q=${encodeURIComponent(query)}&offset=${offset}`)
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.length === 0) {
+                                trigger.style.display = 'none';
+                                return;
+                            }
 
-        const activeGenres = timeKeywords[activeBlock] || [];
+                            data.forEach(item => {
+                                const card = document.createElement('div');
+                                card.className = 'card shadow-sm flex-shrink-0';
+                                card.style.width = '280px';
+                                card.style.borderRadius = '8px';
+                                
+                                let imageHtml = item.image_url 
+                                    ? `<img src="${item.image_url}" class="card-img-top" style="height: 140px; object-fit: cover; border-top-left-radius: 8px; border-top-right-radius: 8px;">` 
+                                    : '';
 
-        // State trackers for each genre block
-        const genreStates = {};
+                                card.innerHTML = `
+                                    ${imageHtml}
+                                    <div class="card-body d-flex flex-column">
+                                        <h6 class="card-title" style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 0.95rem;">
+                                            <a href="${item.url || item.link}" target="_blank" class="text-decoration-none text-dark">${item.title}</a>
+                                        </h6>
+                                        <p class="card-text small text-muted" style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
+                                            ${item.snippet}
+                                        </p>
+                                        <div class="mt-auto">
+                                            <span class="badge bg-light text-dark border">${item.source_domain || 'Web'}</span>
+                                        </div>
+                                    </div>
+                                `;
+                                track.insertBefore(card, trigger);
+                            });
 
-        function initGenreBlocks() {
-            if (!activeGenres || activeGenres.length === 0) {
-                emptyState.classList.remove('d-none');
-                return;
-            }
-
-            activeGenres.forEach((item, index) => {
-                const sectionId = `genre-feed-${index}`;
-                const loadMoreBtnId = `btn-load-more-${index}`;
-
-                genreStates[index] = {
-                    query: item.query,
-                    genre: item.genre,
-                    offset: 1,
-                    isLoading: false,
-                    maxResults: 30
-                };
-
-                const blockHtml = `
-                    <div class="card shadow-sm border-0 border-top border-primary border-3">
-                        <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
-                            <div>
-                                <h5 class="mb-0 text-dark">${item.genre}</h5>
-                                <small class="text-muted">Key topics: ${item.query}</small>
-                            </div>
-                            <span class="badge bg-light text-primary border border-primary">${activeBlock} Preference</span>
-                        </div>
-                        <div class="card-body">
-                            <div class="row row-cols-1 row-cols-md-2 g-3" id="${sectionId}">
-                                <!-- Cards injected here -->
-                            </div>
-                        </div>
-                        <div class="card-footer bg-white border-0 text-center pb-3">
-                            <button id="${loadMoreBtnId}" class="btn btn-sm btn-outline-primary px-4" onclick="loadGenreContent(${index})">
-                                Load More ${item.genre}
-                            </button>
-                        </div>
-                    </div>
-                `;
-
-                genreBlocksContainer.insertAdjacentHTML('beforeend', blockHtml);
-
-                // Fetch initial 4 items for this specific genre block
-                loadGenreContent(index);
+                            track.setAttribute('data-offset', offset + data.length);
+                        })
+                        .catch(error => {
+                            console.error("Error loading recommendations:", error);
+                            trigger.style.display = 'none';
+                        });
+                }
             });
-        }
+        }, {
+            root: null, 
+            rootMargin: '0px 150px 0px 0px', 
+            threshold: 0.1 
+        });
 
-        async function loadGenreContent(index) {
-            const state = genreStates[index];
-            if (!state || state.isLoading || state.offset > state.maxResults) return;
-
-            state.isLoading = true;
-            const container = document.getElementById(`genre-feed-${index}`);
-            const btn = document.getElementById(`btn-load-more-${index}`);
-
-            if (btn) {
-                btn.disabled = true;
-                btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span> Loading...`;
-            }
-
-            try {
-                const response = await fetch(`/api/recommendations?q=${encodeURIComponent(state.query)}&offset=${state.offset}`);
-                const data = await response.json();
-
-                if (!data || data.length === 0) {
-                    if (btn) {
-                        btn.disabled = true;
-                        btn.textContent = 'No More Content';
-                    }
-                    return;
-                }
-
-                data.forEach(item => {
-                    const card = `
-                        <div class="col">
-                            <div class="card h-100 border shadow-sm">
-                                <div class="card-body d-flex flex-column">
-                                    <h6 class="card-title text-truncate" title="${item.title}">${item.title}</h6>
-                                    <p class="card-text small text-muted flex-grow-1" style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
-                                        ${item.snippet}
-                                    </p>
-                                    <a href="${item.link}" target="_blank" class="btn btn-sm btn-outline-secondary mt-2 w-100">Read Source</a>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                    container.insertAdjacentHTML('beforeend', card);
-                });
-
-                state.offset += data.length;
-
-                if (state.offset > state.maxResults) {
-                    if (btn) {
-                        btn.disabled = true;
-                        btn.textContent = 'Limit Reached (30 items)';
-                    }
-                } else if (btn) {
-                    btn.disabled = false;
-                    btn.textContent = `Load More ${state.genre}`;
-                }
-            } catch (err) {
-                console.error(`Failed to fetch for ${state.genre}:`, err);
-                if (btn) {
-                    btn.disabled = false;
-                    btn.textContent = 'Retry';
-                }
-            } finally {
-                state.isLoading = false;
-            }
-        }
-
-        // Initialize genre blocks when the Recommendations tab is clicked
-        const recTabBtn = document.querySelector('button[data-bs-target="#recommendations-view"]');
-        let initialized = false;
-        recTabBtn.addEventListener('shown.bs.tab', function () {
-            if (!initialized) {
-                initGenreBlocks();
-                initialized = true;
-            }
+        document.querySelectorAll('.scroll-trigger').forEach(trigger => {
+            observer.observe(trigger);
         });
     }
 </script>
