@@ -197,6 +197,7 @@ class MLService:
                 recent_counts[time_block][cluster_id] = recent_counts[time_block].get(cluster_id, 0) + 1
             
         # 6. Recommendation Keyword Export
+        # 6. Recommendation Keyword Export
         time_keywords = {}
         for block in labels:
             counts_to_use = recent_counts[block] if recent_counts[block] else all_time_counts[block]
@@ -206,9 +207,13 @@ class MLService:
                 
                 block_queries = []
                 for cluster_id in top_clusters:
-                    keywords = " ".join(cluster_terms[cluster_id])
+                    raw_keywords = " ".join(cluster_terms[cluster_id])
                     genre = cluster_genres.get(cluster_id, "General")
-                    block_queries.append({"query": keywords, "genre": genre})
+                    
+                    # NEW: Inject the genre as an anchor word to force Google context
+                    anchored_query = f"{genre} {raw_keywords}"
+                    
+                    block_queries.append({"query": anchored_query, "genre": genre})
                 
                 time_keywords[block] = block_queries
             else:

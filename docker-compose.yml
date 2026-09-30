@@ -1,7 +1,31 @@
 version: '3.8'
 
+x-airflow-common: &airflow-common
+  build: .
+  env_file:
+    - .env
+  environment:
+    - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+    - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
+    - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=false
+    - AIRFLOW__CORE__LOAD_EXAMPLES=false
+    - AIRFLOW__CORE__SECURITY_MANAGER_CLASS=airflow.providers.fab.auth_manager.security_manager.override.FabAirflowSecurityManagerOverride
+    - HF_HOME=/tmp/huggingface_cache
+    - AIRFLOW_HOME=/app/airflow
+    - PYTHONPATH=/app
+    - AIRFLOW__WEBSERVER__SECRET_KEY=your_super_secret_key_here
+    - AIRFLOW__CORE__REMOTE_LOGGING=false
+    - AIRFLOW__CORE__LOGGING_LEVEL=INFO
+    - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=true
+  volumes:
+    - ./dags:/app/airflow/dags
+    - hf_cache:/tmp/huggingface_cache
+  depends_on:
+    - airflow-postgres
+
 services:
   web:
+
     build: .
     command: ["gunicorn", "--bind", "0.0.0.0:5000", "--timeout", "600", "app:create_app()"]
     ports:
@@ -9,11 +33,13 @@ services:
     dns:
       - 8.8.8.8
       - 8.8.4.4
-
     env_file:
       - .env
     environment:
       - FLASK_ENV=production
+      - HF_HOME=/tmp/huggingface_cache
+    volumes:
+      - hf_cache:/tmp/huggingface_cache
     depends_on:
       - redis
     restart: unless-stopped
@@ -26,5 +52,29 @@ services:
       - redis_data:/data
     restart: unless-stopped
 
+  airflow-postgres:
+    image: postgres:13
+    environment:
+      - POSTGRES_USER=airflow
+      - POSTGRES_PASSWORD=airflow
+      - POSTGRES_DB=airflow
+    volumes:
+      - airflow_db_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: bash -c "airflow db init && airflow webserver"
+    ports:
+      - "8080:8080"
+    restart: always
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: airflow scheduler
+    restart: always
+
 volumes:
   redis_data:
+  airflow_db_data:
+  hf_cache:

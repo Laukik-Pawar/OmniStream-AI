@@ -1,15 +1,19 @@
 import os
 from flask import Flask
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 from app.config import config_dict
 
-load_dotenv()
+
 
 def create_app(config_name='default'):
     """Flask application factory."""
     app = Flask(__name__, instance_relative_config=True)
     app.config.from_object(config_dict[config_name])
-
+    app.secret_key = os.environ.get("FLASK_SECRET_KEY", "super-secret-default-key")
     try:
         os.makedirs(app.instance_path, exist_ok=True)
     except OSError:
