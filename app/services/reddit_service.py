@@ -1,5 +1,6 @@
 import os
 import logging
+import praw
 from datetime import datetime, timezone
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -19,17 +20,26 @@ REDDIT_GENRE_MAP = {
 
 class RedditService:
     def __init__(self, credentials: dict):
-        """Initialize RedditService using Neon PostgreSQL as the primary data store."""
         self.db_url = os.environ.get('DATABASE_URL')
-        
-        # Map the exact keys your Flask session is currently sending
         self.user_id = credentials.get('db_user_id') or credentials.get('user_id')
         self.reddit_username = credentials.get('username') or credentials.get('reddit_username')
         self.refresh_token = credentials.get('refresh_token')
 
-        # If user_id is not passed directly, look it up via username or token
         if not self.user_id and (self.reddit_username or self.refresh_token):
             self.user_id = self._resolve_user_id()
+
+        # Live Reddit client (for ingestion)
+        self.reddit = None
+        if self.refresh_token:
+            try:
+                self.reddit = praw.Reddit(
+                    client_id=os.environ.get("REDDIT_CLIENT_ID"),
+                    client_secret=os.environ.get("REDDIT_CLIENT_SECRET"),
+                    refresh_token=self.refresh_token,
+                    user_agent="OmniStream-AI/1.0 by YourUsername"
+                )
+            except Exception as e:
+                logger.error(f"Failed to init PRAW: {e}")
 
     def _get_connection(self):
         """Create a fresh connection to the Neon database."""
@@ -119,6 +129,59 @@ class RedditService:
 
         return content_items
     
-    def fetch_history(self, limit=10):
-        """Fetch recent interactions from the database for the history view."""
-        return self.fetch_upvoted_posts(limit=limit)
+    def fetch_history(self, limit=15):
+        """Fetches upvoted posts or saved history from Reddit API."""
+        history_items = []
+        try:
+            # Example: Fetching user's upvoted posts
+            for submission in self.reddit.user.me().upvoted(limit=limit):
+                history_items.append({
+                    'post_id': submission.id,
+                    'title': submission.title,
+                    'content': submission.selftext[:500] if hasattr(submission, 'selftext') else '',
+                    'url': submission.url,
+                    'score': submission.score,
+                    'source': 'reddit'
+                })
+        except Exception as e:
+            print(f"Error pulling live Reddit history: {e}")
+        return history_items
+
+    def ingest_upvoted_posts(self, limit=50):
+        """
+        Pull live upvoted posts from Reddit and store them in the DB.
+        Call this from Airflow or from a manual endpoint.
+        """
+        if not self.reddit or not self.user_id:
+            logger.warning("Cannot ingest: missing Reddit client or user_id")
+            return 0
+
+        inserted = 0
+        try:
+            for submission in self.reddit.user.me().upvoted(limit=limit):
+                # Convert Reddit created_utc to timezone-aware datetime
+                ts = datetime.fromtimestamp(submission.created_utc, tz=timezone.utc)
+
+                with self._get_connection() as conn:
+                    with conn.cursor() as cursor:
+                        cursor.execute("""
+                            INSERT INTO reddit_interactions 
+                                (user_id, reddit_post_id, title, content, url, subreddit, interaction_timestamp)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (user_id, reddit_post_id) DO NOTHING;
+                        """, (
+                            self.user_id,
+                            submission.id,
+                            submission.title,
+                            (submission.selftext or '')[:2000],
+                            submission.url,
+                            str(submission.subreddit),
+                            ts
+                        ))
+                        if cursor.rowcount > 0:
+                            inserted += 1
+                    conn.commit()
+        except Exception as e:
+            logger.error(f"Ingestion error: {e}")
+
+        return inserted
