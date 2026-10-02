@@ -1,8 +1,9 @@
-from flask import Blueprint, jsonify, session
+from flask import Blueprint, jsonify, session, request
 from app.services.reddit_service import RedditService
 from app.services.youtube_service import YouTubeService
 from app.services.ml_service import MLService
 from app.services.content_service import ContentService
+# Import your actual database model class here (e.g., from app.models import RecommendationModel)
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
@@ -65,3 +66,44 @@ def generate_recommendations():
         
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@dashboard_bp.route('/api/recommendations', methods=['GET'])
+def get_recommendations():
+    """Hybrid endpoint: Serves stored DB items for initial loads, then fetches live content on scroll."""
+    query_genre = request.args.get('q', '')
+    offset = int(request.args.get('offset', 0))
+    limit = 4  # Batch size matching your UI layout
+    
+    try:
+        # Query your database model for stored records matching the genre/offset
+        # (Make sure RecommendationModel matches your actual database model class name)
+        db_items = RecommendationModel.query.filter_by(genre=query_genre)\
+                                            .offset(offset)\
+                                            .limit(limit)\
+                                            .all()
+        
+        results = [item.to_dict() for item in db_items]
+        
+        # Real-time fallback: If database batch runs out of items for this offset, fetch live content
+        if len(results) < limit:
+            content_service = ContentService()
+            needed = limit - len(results)
+            search_query = f"{query_genre} recommendations"
+            extra_articles = content_service.scrape_content(search_query, num_results=needed)
+            
+            for article in extra_articles:
+                results.append({
+                    "title": article.get("title"),
+                    "url": article.get("url"),
+                    "snippet": article.get("snippet"),
+                    "image_url": article.get("image_url"),
+                    "source_domain": article.get("source_domain", "web"),
+                    "genre": query_genre
+                })
+                
+        return jsonify(results)
+        
+    except Exception as e:
+        print(f"Error fetching infinite scroll recommendations: {e}")
+        return jsonify([]), 500
