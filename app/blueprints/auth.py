@@ -21,43 +21,45 @@ REDDIT_CLIENT_ID = os.environ.get('REDDIT_CLIENT_ID')
 REDDIT_CLIENT_SECRET = os.environ.get('REDDIT_CLIENT_SECRET')
 REDDIT_USER_AGENT = 'web:omnistream-ai:v1.0'
 
-def save_credentials_to_db(platform, credentials_dict):
-    """Upserts OAuth tokens into Neon DB for Airflow background access."""
-    db_url = os.environ.get('DATABASE_URL')
-    if not db_url:
-        print("Warning: DATABASE_URL not set, skipping token storage.")
-        return
 
+def get_db_connection():
+    return psycopg2.connect(os.environ.get('DATABASE_URL'))
+
+
+def save_credentials_to_db(user_identifier: str, platform: str, credentials_dict: dict):
+    """Upserts OAuth tokens for any user."""
     try:
-        with psycopg2.connect(db_url) as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cursor:
-                # Ensure the admin row exists before attempting to update it
                 cursor.execute("""
-                    INSERT INTO user_oauth_tokens (user_identifier) 
-                    VALUES ('admin') 
+                    INSERT INTO user_oauth_tokens (user_identifier)
+                    VALUES (%s)
                     ON CONFLICT (user_identifier) DO NOTHING;
-                """)
-                
+                """, (user_identifier,))
+
                 if platform == 'youtube':
                     cursor.execute("""
-                        UPDATE user_oauth_tokens 
-                        SET youtube_token = %s, last_updated = CURRENT_TIMESTAMP 
-                        WHERE user_identifier = 'admin';
-                    """, (Json(credentials_dict),))
+                        UPDATE user_oauth_tokens
+                        SET youtube_token = %s, last_updated = CURRENT_TIMESTAMP
+                        WHERE user_identifier = %s;
+                    """, (Json(credentials_dict), user_identifier))
                 elif platform == 'reddit':
                     cursor.execute("""
-                        UPDATE user_oauth_tokens 
-                        SET reddit_token = %s, last_updated = CURRENT_TIMESTAMP 
-                        WHERE user_identifier = 'admin';
-                    """, (Json(credentials_dict),))
+                        UPDATE user_oauth_tokens
+                        SET reddit_token = %s, last_updated = CURRENT_TIMESTAMP
+                        WHERE user_identifier = %s;
+                    """, (Json(credentials_dict), user_identifier))
             conn.commit()
     except Exception as e:
-        print(f"Database error saving {platform} token: {e}")
+        print(f"Database error saving {platform} token for {user_identifier}: {e}")
+
 
 # --- YOUTUBE ROUTES ---
 @auth_bp.route('/youtube/login')
 def youtube_login():
-    """Initiates the YouTube OAuth 2.0 flow."""
+    if Flow is None:
+        return "google-auth-oauthlib is not installed", 500
+
     flow = Flow.from_client_secrets_file(
         CLIENT_SECRETS_FILE,
         scopes=YOUTUBE_SCOPES,
@@ -65,14 +67,15 @@ def youtube_login():
     )
     authorization_url, state = flow.authorization_url(
         access_type='offline',
-        include_granted_scopes='true'
+        include_granted_scopes='true',
+        prompt='consent'               # forces refresh_token
     )
     session['state'] = state
     return redirect(authorization_url)
 
+
 @auth_bp.route('/oauth2callback')
 def oauth2callback():
-    """Handles the redirect from Google and stores credentials."""
     state = session.get('state')
     if not state or state != request.args.get('state'):
         return "State mismatch. CSRF attempt detected.", 400
@@ -85,7 +88,7 @@ def oauth2callback():
     )
     flow.fetch_token(authorization_response=request.url)
     credentials = flow.credentials
-    
+
     credentials_dict = {
         'token': credentials.token,
         'refresh_token': credentials.refresh_token,
@@ -94,17 +97,21 @@ def oauth2callback():
         'client_secret': credentials.client_secret,
         'scopes': credentials.scopes
     }
-    
-    # Store in session for immediate frontend use and in DB for Airflow
+
+    # Prefer existing user_identifier (from Reddit) if present
+    user_identifier = session.get('user_identifier') or 'youtube_user'
+
+    session['user_identifier'] = user_identifier
     session['youtube_credentials'] = credentials_dict
-    save_credentials_to_db('youtube', credentials_dict)
-    
+
+    save_credentials_to_db(user_identifier, 'youtube', credentials_dict)
+
     return redirect(url_for('views.dashboard'))
+
 
 # --- REDDIT ROUTES ---
 @auth_bp.route('/reddit/login')
 def reddit_login():
-    """Initiates the Reddit OAuth 2.0 flow."""
     reddit = praw.Reddit(
         client_id=REDDIT_CLIENT_ID,
         client_secret=REDDIT_CLIENT_SECRET,
@@ -113,17 +120,20 @@ def reddit_login():
     )
     state = str(uuid.uuid4())
     session['reddit_state'] = state
-    
-    auth_url = reddit.auth.url(scopes=['history', 'identity', 'read'], state=state, duration='permanent')
+    auth_url = reddit.auth.url(
+        scopes=['history', 'identity', 'read'],
+        state=state,
+        duration='permanent'
+    )
     return redirect(auth_url)
+
 
 @auth_bp.route('/reddit/callback')
 def reddit_callback():
-    """Handles the redirect from Reddit, exchanges the code, and saves to PostgreSQL."""
     state = request.args.get('state')
     if state != session.get('reddit_state'):
         return jsonify({'error': 'State mismatch. CSRF attempt detected.'}), 400
-        
+
     code = request.args.get('code')
     if not code:
         return jsonify({'error': 'Authorization denied.'}), 400
@@ -134,9 +144,9 @@ def reddit_callback():
         redirect_uri=url_for('auth.reddit_callback', _external=True),
         user_agent=REDDIT_USER_AGENT
     )
-    
+
     refresh_token = reddit_init.auth.authorize(code)
-    
+
     reddit_auth = praw.Reddit(
         client_id=REDDIT_CLIENT_ID,
         client_secret=REDDIT_CLIENT_SECRET,
@@ -144,22 +154,55 @@ def reddit_callback():
         user_agent=REDDIT_USER_AGENT
     )
     username = reddit_auth.user.me().name
-    
+
     credentials_dict = {
         'username': username,
         'refresh_token': refresh_token
     }
-    
-    # Store in session for immediate frontend use and in DB for Airflow
+
+    # Always use Reddit username as the main identity
     session['reddit_credentials'] = credentials_dict
-    save_credentials_to_db('reddit', credentials_dict)
-    
+    session['user_identifier'] = username
+
+    # Auto-create / update user row
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    INSERT INTO users (reddit_username, reddit_refresh_token)
+                    VALUES (%s, %s)
+                    ON CONFLICT (reddit_username)
+                    DO UPDATE SET reddit_refresh_token = EXCLUDED.reddit_refresh_token
+                    RETURNING id;
+                """, (username, refresh_token))
+                cursor.fetchone()
+
+                # Optional: move YouTube token from 'youtube_user' to real username
+                cursor.execute("""
+                    UPDATE user_oauth_tokens
+                    SET youtube_token = (
+                        SELECT youtube_token FROM user_oauth_tokens
+                        WHERE user_identifier = 'youtube_user'
+                    )
+                    WHERE user_identifier = %s
+                      AND youtube_token IS NULL
+                      AND EXISTS (
+                          SELECT 1 FROM user_oauth_tokens WHERE user_identifier = 'youtube_user'
+                      );
+                """, (username,))
+            conn.commit()
+    except Exception as e:
+        print(f"Error creating/linking user: {e}")
+
+    save_credentials_to_db(username, 'reddit', credentials_dict)
+
     return redirect(url_for('views.dashboard'))
+
 
 @auth_bp.route('/status')
 def status():
-    """Simple health check to verify connection state."""
     return jsonify({
         'youtube_connected': 'youtube_credentials' in session,
-        'reddit_connected': 'reddit_credentials' in session
+        'reddit_connected': 'reddit_credentials' in session,
+        'user_identifier': session.get('user_identifier')
     })
