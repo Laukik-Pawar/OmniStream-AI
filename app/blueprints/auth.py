@@ -99,8 +99,10 @@ def oauth2callback():
     }
 
     # Prefer existing user_identifier (from Reddit) if present
-    user_identifier = session.get('user_identifier') or 'youtube_user'
-
+    user_identifier = session.get('user_identifier') 
+    if not user_identifier:
+        user_identifier = 'youtube_user'
+        
     session['user_identifier'] = user_identifier
     session['youtube_credentials'] = credentials_dict
 
