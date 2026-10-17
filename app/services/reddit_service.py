@@ -80,10 +80,8 @@ class RedditService:
         
         official_genre = REDDIT_GENRE_MAP.get(clean_sub)
         
-        # Fallback: Capitalize the subreddit name if it isn't in our hardcoded list
-        if not official_genre and clean_sub:
-            official_genre = clean_sub.capitalize()
-        elif not official_genre:
+        # Unknown subreddit names are not reliable genres; allow ML inference.
+        if not official_genre:
             official_genre = "General"
 
         return {
@@ -136,10 +134,7 @@ class RedditService:
             # Example: Fetching user's upvoted posts
             for submission in self.reddit.user.me().upvoted(limit=limit):
                 subreddit_name = str(submission.subreddit)
-                native_genre = REDDIT_GENRE_MAP.get(
-                    subreddit_name.lower(),
-                    subreddit_name.replace('_', ' ').title() or 'General',
-                )
+                native_genre = REDDIT_GENRE_MAP.get(subreddit_name.lower(), 'General')
                 created_at = datetime.fromtimestamp(
                     submission.created_utc, tz=timezone.utc
                 ).isoformat()
