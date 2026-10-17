@@ -135,13 +135,24 @@ class RedditService:
         try:
             # Example: Fetching user's upvoted posts
             for submission in self.reddit.user.me().upvoted(limit=limit):
+                subreddit_name = str(submission.subreddit)
+                native_genre = REDDIT_GENRE_MAP.get(
+                    subreddit_name.lower(),
+                    subreddit_name.replace('_', ' ').title() or 'General',
+                )
+                created_at = datetime.fromtimestamp(
+                    submission.created_utc, tz=timezone.utc
+                ).isoformat()
                 history_items.append({
                     'post_id': submission.id,
                     'title': submission.title,
-                    'content': submission.selftext[:500] if hasattr(submission, 'selftext') else '',
+                    'content': (submission.selftext or '')[:500],
                     'url': submission.url,
                     'score': submission.score,
-                    'source': 'reddit'
+                    'source': 'reddit',
+                    'subreddit': subreddit_name,
+                    'timestamp': created_at,
+                    'native_genre': native_genre,
                 })
         except Exception as e:
             print(f"Error pulling live Reddit history: {e}")
