@@ -3,7 +3,7 @@ import os
 
 from googleapiclient.discovery import build
 
-from app.services.recommendation_engine import RecommendationEngine, canonical_url
+from app.services.recommendation_engine import canonical_url
 
 logger = logging.getLogger(__name__)
 
