@@ -284,40 +284,18 @@ class MLService:
 
     @staticmethod
     def fetch_paginated_cse(query, start_index=1, num=5):
-        """Standalone method to support the infinite scroll API endpoint."""
-        api_key = os.environ.get('GOOGLE_API_KEY')
-        cse_id = os.environ.get('GOOGLE_CSE_ID')
-        
-        if not api_key or not cse_id or not query:
+        """Paginated safe search using the shared result-normalization service."""
+        if not query or not str(query).strip():
             return []
-
         try:
-            service = build("customsearch", "v1", developerKey=api_key)
-            res = service.cse().list(
-                q=query, 
-                cx=cse_id, 
-                num=num,
+            # Local import avoids a module-level dependency cycle and keeps the
+            # Google CSE behavior consistent with ContentService.
+            from app.services.content_service import ContentService
+            return ContentService().scrape_content(
+                str(query),
+                num_results=num,
                 start=start_index,
-                safe="off"
-            ).execute()
-            
-            results = []
-            for item in res.get('items', []):
-                pagemap = item.get('pagemap', {})
-                thumbnail_url = ''
-                if 'cse_thumbnail' in pagemap and len(pagemap['cse_thumbnail']) > 0:
-                    thumbnail_url = pagemap['cse_thumbnail'][0].get('src', '')
-                elif 'cse_image' in pagemap and len(pagemap['cse_image']) > 0:
-                    thumbnail_url = pagemap['cse_image'][0].get('src', '')
-
-                results.append({
-                    'title': item.get('title', 'No Title'),
-                    'url': item.get('link', '#'),
-                    'snippet': item.get('snippet', ''),
-                    'source_domain': item.get('displayLink', 'Web'),
-                    'image_url': thumbnail_url
-                })
-            return results
-        except Exception as e:
-            logger.error(f"Error fetching paginated CSE results: {e}")
+            )
+        except Exception:
+            logger.exception("Error fetching paginated CSE results")
             return []
