@@ -9,7 +9,7 @@ import pandas as pd
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer, ENGLISH_STOP_WORDS
 from sklearn.cluster import KMeans
-from scipy.sparse import diags
+from scipy.sparse import csr_matrix, diags
 from transformers import pipeline
 import logging
 from googleapiclient.discovery import build
@@ -178,7 +178,7 @@ class MLService:
             terms = vectorizer.get_feature_names_out()
             has_vocabulary = len(terms) > 0
         except ValueError:
-            X = None
+            X = csr_matrix((len(clean_texts), 1), dtype=float)
             terms = np.array(["general"])
             has_vocabulary = False
 
@@ -193,10 +193,7 @@ class MLService:
         
         num_clusters = min(len(texts), max(1, int(num_categories)))
         if not has_vocabulary:
-            X_weighted = diags(np.ones(len(texts))).dot(
-                # Sparse all-zero vectors let temporal grouping work when text is empty.
-                __import__('scipy').sparse.csr_matrix((len(texts), 1))
-            )
+            # Sparse all-zero vectors let temporal grouping work when text is empty.
             num_clusters = 1
 
         kmeans = KMeans(n_clusters=num_clusters, random_state=42, n_init=5)
