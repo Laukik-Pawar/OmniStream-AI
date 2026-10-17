@@ -50,7 +50,10 @@ class MLService:
         # Remove standalone promotional lines without truncating natural mentions
         # such as "I follow technology creators on Instagram".
         text = re.sub(
-            r'(?im)^\s*(?:follow|subscribe|instagram|twitter|facebook|patreon|tags:)\b.*
+            r'(?im)^\s*(?:follow|subscribe|instagram|twitter|facebook|patreon|tags:)\b.*$',
+            '',
+            text,
+        )
         return text
 
     @staticmethod
