@@ -12,7 +12,6 @@ from sklearn.cluster import KMeans
 from scipy.sparse import csr_matrix, diags
 from transformers import pipeline
 import logging
-from googleapiclient.discovery import build
 
 logger = logging.getLogger(__name__)
 
