@@ -86,7 +86,9 @@ def generate_recommendations():
                         'snippet': item.get('snippet', ''),
                         'source_domain': item.get('source_domain', 'Web'),
                         'image_url': item.get('image_url', ''),
-                        'genre': q_obj.get('genre', 'General'),
+                        # The query's genre is a retrieval hint, not a verified
+                        # classification of each returned candidate.
+                        'query_genre': q_obj.get('genre', 'General'),
                     })
                 # Rank search candidates against this user's cross-platform history.
                 # Embeddings are loaded lazily; TF-IDF remains the fallback.
