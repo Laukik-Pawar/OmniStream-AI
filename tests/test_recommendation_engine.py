@@ -41,6 +41,35 @@ class RecommendationEngineTests(unittest.TestCase):
 
         self.assertEqual(results[0]["title"], "Python data engineering tutorial")
 
+    def test_query_label_does_not_count_as_verified_candidate_genre(self):
+        candidates = [
+            {
+                "title": "Same candidate text",
+                "url": "https://example.com/query-label",
+                "genre": "Technology",
+            },
+            {
+                "title": "Same candidate text",
+                "url": "https://example.com/verified-label",
+                "candidate_genre": "Technology",
+            },
+        ]
+        with patch(
+            "app.services.recommendation_engine._embed_texts",
+            side_effect=RuntimeError("offline"),
+        ):
+            results = RecommendationEngine.rank_candidates(
+                [{"title": "General interests", "native_genre": "Technology"}],
+                candidates,
+                now="2026-10-21T12:00:00Z",
+            )
+
+        scores = {item["url"]: item["recommendation_score"] for item in results}
+        self.assertGreater(
+            scores["https://example.com/verified-label"],
+            scores["https://example.com/query-label"],
+        )
+
     def test_empty_history_still_returns_valid_unique_candidates(self):
         candidates = [
             {"title": "First", "url": "https://example.com/1"},
