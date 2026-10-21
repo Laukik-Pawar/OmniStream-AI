@@ -80,10 +80,8 @@ class RedditService:
         
         official_genre = REDDIT_GENRE_MAP.get(clean_sub)
         
-        # Fallback: Capitalize the subreddit name if it isn't in our hardcoded list
-        if not official_genre and clean_sub:
-            official_genre = clean_sub.capitalize()
-        elif not official_genre:
+        # Unknown subreddit names are not reliable genres; allow ML inference.
+        if not official_genre:
             official_genre = "General"
 
         return {
@@ -135,13 +133,21 @@ class RedditService:
         try:
             # Example: Fetching user's upvoted posts
             for submission in self.reddit.user.me().upvoted(limit=limit):
+                subreddit_name = str(submission.subreddit)
+                native_genre = REDDIT_GENRE_MAP.get(subreddit_name.lower(), 'General')
+                created_at = datetime.fromtimestamp(
+                    submission.created_utc, tz=timezone.utc
+                ).isoformat()
                 history_items.append({
                     'post_id': submission.id,
                     'title': submission.title,
-                    'content': submission.selftext[:500] if hasattr(submission, 'selftext') else '',
+                    'content': (submission.selftext or '')[:500],
                     'url': submission.url,
                     'score': submission.score,
-                    'source': 'reddit'
+                    'source': 'reddit',
+                    'subreddit': subreddit_name,
+                    'timestamp': created_at,
+                    'native_genre': native_genre,
                 })
         except Exception as e:
             print(f"Error pulling live Reddit history: {e}")

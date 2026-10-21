@@ -3,6 +3,7 @@ from app.services.reddit_service import RedditService
 from app.services.youtube_service import YouTubeService
 from app.services.ml_service import MLService
 from app.services.content_service import ContentService
+from app.services.recommendation_engine import RecommendationEngine
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -81,9 +82,19 @@ def generate_recommendations():
                 for item in raw_results:
                     articles.append({
                         'title': item.get('title'),
-                        'url': item.get('link') or item.get('url'),
-                        'snippet': item.get('snippet', '')
+                        'url': item.get('url') or item.get('link'),
+                        'snippet': item.get('snippet', ''),
+                        'source_domain': item.get('source_domain', 'Web'),
+                        'image_url': item.get('image_url', ''),
+                        # The query's genre is a retrieval hint, not a verified
+                        # classification of each returned candidate.
+                        'query_genre': q_obj.get('genre', 'General'),
                     })
+                # Rank search candidates against this user's cross-platform history.
+                # Embeddings are loaded lazily; TF-IDF remains the fallback.
+                articles = RecommendationEngine.rank_candidates(
+                    history_data, articles, limit=3
+                )
                 block_results.append({
                     'genre': q_obj.get('genre', 'General'),
                     'query': q_obj['query'],
