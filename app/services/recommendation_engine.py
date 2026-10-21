@@ -244,7 +244,7 @@ class RecommendationEngine:
                 or item.get("category")
                 or ""
             ).strip().casefold()
-            genre_match = 1.0 if genre and genre in preferred_genres else 0.0
+            genre_match = ( 1.0 if genre and genre in preferred_genres else 0.0 )
 
             published = _parse_timestamp(
                 item.get("published_at") or item.get("timestamp") or item.get("date")
