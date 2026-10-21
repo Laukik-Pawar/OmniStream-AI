@@ -106,7 +106,7 @@ def _history_text(item):
 def _candidate_text(item):
     return clean_text(" ".join(
         str(item.get(key) or "")
-        for key in ("title", "snippet", "description", "content", "source_domain", "genre")
+        for key in ("title", "snippet", "description", "content", "source_domain")
     ))
 
 
@@ -236,7 +236,14 @@ class RecommendationEngine:
 
         ranked = []
         for index, item in enumerate(unique):
-            genre = str(item.get("genre") or item.get("category") or "").strip().casefold()
+            # Query labels are not verified candidate genres. Only independently
+            # supplied candidate metadata may earn a genre-match bonus.
+            genre = str(
+                item.get("candidate_genre")
+                or item.get("native_genre")
+                or item.get("category")
+                or ""
+            ).strip().casefold()
             genre_match = 1.0 if genre and genre in preferred_genres else 0.0
 
             published = _parse_timestamp(
