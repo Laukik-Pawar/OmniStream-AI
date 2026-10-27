@@ -11,3 +11,4 @@ instance/
 *.pickle
 mycred
 client_secret.json
+personalnotes.txt

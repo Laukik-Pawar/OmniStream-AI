@@ -95,3 +95,72 @@ class YouTubeService:
         return content_items
 
 # The commented-out code blocks at the bottom of your file can remain commented out.
+    
+    @staticmethod
+    def search_videos(search_query, session_credentials, limit=3):
+        """Discover new YouTube videos matching a user's interests."""
+        if not isinstance(search_query, str) or not search_query.strip():
+            return []
+
+        try:
+            creds = Credentials(
+                token=session_credentials['token'],
+                refresh_token=session_credentials.get('refresh_token'),
+                token_uri=session_credentials.get('token_uri'),
+                client_id=session_credentials.get('client_id'),
+                client_secret=session_credentials.get('client_secret'),
+                scopes=session_credentials.get('scopes')
+            )
+
+            youtube = build(
+                'youtube',
+                'v3',
+                credentials=creds,
+                cache_discovery=False
+            )
+
+            response = youtube.search().list(
+                part='snippet',
+                q=search_query.strip(),
+                type='video',
+                maxResults=max(1, min(int(limit), 10)),
+                safeSearch='moderate'
+            ).execute()
+
+            videos = []
+
+            for item in response.get('items', []):
+                video_id = (item.get('id') or {}).get('videoId')
+                snippet = item.get('snippet') or {}
+
+                if not video_id:
+                    continue
+
+                thumbnails = snippet.get('thumbnails') or {}
+                thumbnail = (
+                    thumbnails.get('high')
+                    or thumbnails.get('medium')
+                    or thumbnails.get('default')
+                    or {}
+                )
+
+                videos.append({
+                    'source': 'youtube',
+                    'type': 'Video',
+                    'content_type': 'video',
+                    'title': snippet.get('title', 'Untitled video'),
+                    'content': snippet.get('description', ''),
+                    'snippet': snippet.get('description', ''),
+                    'url': f'https://www.youtube.com/watch?v={video_id}',
+                    'source_domain': 'YouTube',
+                    'channel': snippet.get('channelTitle', ''),
+                    'published_at': snippet.get('publishedAt'),
+                    'timestamp': snippet.get('publishedAt'),
+                    'image_url': thumbnail.get('url', '')
+                })
+
+            return videos
+
+        except Exception:
+            logger.exception('Error discovering YouTube videos')
+            return []
