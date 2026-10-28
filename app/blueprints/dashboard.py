@@ -8,6 +8,8 @@ from app.services.recommendation_engine import RecommendationEngine
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
@@ -91,7 +93,28 @@ def generate_recommendations():
         recommendations = {}
 
         # 4. Discover and rank articles and videos for each query.
-        for time_block, query_list in time_keywords.items():
+        
+        current_hour = datetime.now(
+            ZoneInfo("America/New_York")
+        ).hour
+
+        if current_hour < 6:
+            current_block = "Night"
+        elif current_hour < 12:
+            current_block = "Morning"
+        elif current_hour < 18:
+            current_block = "Afternoon"
+        else:
+            current_block = "Evening"
+
+        selected_queries = time_keywords.get(
+            current_block, []
+        )[:2]
+
+        for time_block, query_list in [
+            (current_block, selected_queries)
+        ]:
+
             block_results = []
 
             for q_obj in query_list:
@@ -166,12 +189,19 @@ def generate_recommendations():
                     limit=3
                 )
 
+                
                 block_results.append({
                     'genre': genre,
                     'query': query,
+                    'keywords': q_obj.get('keywords', []),
+                    'cluster_id': q_obj.get('cluster_id'),
+                    'query_strategy': q_obj.get(
+                        'query_strategy', 'unknown'
+                    ),
                     'articles': ranked_articles,
                     'videos': ranked_videos
                 })
+
 
             recommendations[time_block] = block_results
 

@@ -299,28 +299,26 @@ class MLService:
                 recent_counts[time_block][cluster_id] = recent_counts[time_block].get(cluster_id, 0) + 1
             
         # 6. Recommendation Keyword Export
-        # 6. Recommendation Keyword Export
         time_keywords = {}
         for block in labels:
-            counts_to_use = recent_counts[block] if recent_counts[block] else all_time_counts[block]
-            
+            counts_to_use = (
+                recent_counts[block]
+                if recent_counts[block]
+                else all_time_counts[block]
+            )
+            block_queries = []
             if counts_to_use:
-                top_clusters = sorted(counts_to_use, key=counts_to_use.get, reverse=True)[:3]
-                
-                block_queries = []
+                top_clusters = sorted(
+                    counts_to_use,
+                    key=counts_to_use.get,
+                    reverse=True
+                )[:3]
                 for cluster_id in top_clusters:
-                    
                     keywords = cluster_terms[cluster_id]
                     genre = cluster_genres.get(cluster_id, "General")
-
-                    query = MLService.build_search_query(
-                        genre,
-                        keywords
-                    )
-
+                    query = MLService.build_search_query(genre, keywords)
                     if not query:
                         continue
-
                     block_queries.append({
                         "query": query,
                         "genre": genre,
@@ -328,18 +326,7 @@ class MLService:
                         "cluster_id": int(cluster_id),
                         "query_strategy": "tfidf_cluster"
                     })
-
-
-                    # Keep the query useful if history has no extractable keywords.
-                    anchored_query = f"{genre} {raw_keywords}".strip()
-                    if not raw_keywords and genre == "General":
-                        anchored_query = "technology news"
-                    
-                    block_queries.append({"query": anchored_query, "genre": genre})
-                
-                time_keywords[block] = block_queries
-            else:
-                time_keywords[block] = [{"query": "technology news", "genre": "General"}]
+            time_keywords[block] = block_queries
 
         active_data = {k: v for k, v in categorized_data.items() if v}
         return active_data, time_keywords

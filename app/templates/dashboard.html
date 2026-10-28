@@ -155,6 +155,19 @@
         Select Generate Feed to discover personalized content.
     </div>
 
+
+    
+<details class="mb-3 border rounded p-3">
+    <summary class="fw-semibold" style="cursor:pointer">
+        Recommendation Debug View
+    </summary>
+    <p class="small text-muted mt-2">
+        Actual search queries and keywords used to discover content.
+    </p>
+    <div id="recommendation-debug-results"></div>
+</details>
+
+
     <div id="personalized-feed-results" class="row g-3"></div>
 </section>
 
@@ -441,7 +454,9 @@
     const results = document.getElementById(
         "personalized-feed-results"
     );
-
+const debugResults = document.getElementById(
+    "recommendation-debug-results"
+);
     if (!button || !status || !results) return;
 
     const currentBlock = {{ current_block | default('Morning') | tojson }};
@@ -454,8 +469,8 @@
         card.className = "card h-100 shadow-sm";
 
         const imageUrl = item.image_url || "";
-        if (/^https?:\/\//i.test(imageUrl)) {
-            const image = document.createElement("img");
+if (/^https?:\/\//i.test(imageUrl)) {
+                const image = document.createElement("img");
             image.src = imageUrl;
             image.alt = "";
             image.loading = "lazy";
@@ -516,7 +531,7 @@
         button.disabled = true;
         status.textContent = "Generating personalized recommendations...";
         results.replaceChildren();
-
+if (debugResults) debugResults.replaceChildren();
         try {
             const response = await fetch(
                 "/api/dashboard/generate-recommendations",
@@ -543,6 +558,38 @@
             let rendered = 0;
 
             for (const group of selectedGroups) {
+                
+                if (debugResults) {
+                    const entry = document.createElement("div");
+                    entry.className = "border-bottom py-3";
+
+                    const genre = document.createElement("div");
+                    genre.className = "fw-semibold mb-2";
+                    genre.textContent = `Genre: ${group.genre || "General"}`;
+
+                    const query = document.createElement("div");
+                    query.className = "small mb-2";
+                    query.textContent =
+                        `Google query: ${group.query || "N/A"}`;
+
+                    const keywords = document.createElement("div");
+                    keywords.className = "small text-muted";
+                    keywords.textContent =
+                        `Extracted keywords: ${
+                            (group.keywords || []).join(", ") || "None"
+                        }`;
+
+                    const strategy = document.createElement("div");
+                    strategy.className = "small text-muted";
+                    strategy.textContent =
+                        `Strategy: ${group.query_strategy || "unknown"}`;
+
+                    entry.append(
+                        genre, query, keywords, strategy
+                    );
+                    debugResults.appendChild(entry);
+                }
+
                 const candidates = [
                     ...(group.articles || []).map(item => ({
                         ...item,
