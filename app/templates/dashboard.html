@@ -46,7 +46,7 @@
         <ul class="nav nav-pills mb-4" id="dashboardTabs" role="tablist">
             <li class="nav-item" role="presentation">
                 <button class="nav-link active" id="temporal-tab" data-bs-toggle="pill" data-bs-target="#temporal-view" type="button" role="tab">
-                    Temporal View
+                    Temporal View (last 14 days)
                 </button>
             </li>
             <li class="nav-item" role="presentation">
@@ -56,7 +56,7 @@
             </li>
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="recommendations-tab" data-bs-toggle="pill" data-bs-target="#recommendations-view" type="button" role="tab">
-                    Recommendations
+                    Recommendations(15 feeds of Reddit and 10 for YT)
                 </button>
             </li>
         </ul>
@@ -132,6 +132,34 @@
 
             <!-- TAB 3: Recommendations -->
             <div class="tab-pane fade" id="recommendations-view" role="tabpanel">
+                
+<!-- Live personalized recommendations -->
+<section id="personalized-feed" class="mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <h5 class="mb-1">Recommended For You</h5>
+            <small class="text-muted">
+                Articles and videos selected from your interests
+            </small>
+        </div>
+        <button
+            id="refresh-personalized-feed"
+            type="button"
+            class="btn btn-sm btn-outline-primary"
+        >
+            <i class="bi bi-arrow-clockwise"></i> Generate Feed
+        </button>
+    </div>
+
+    <div id="personalized-feed-status" class="small text-muted mb-3">
+        Select Generate Feed to discover personalized content.
+    </div>
+
+    <div id="personalized-feed-results" class="row g-3"></div>
+</section>
+
+<hr class="my-4">
+
                 <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-4">
                     <div>
                         <h4 class="text-primary mb-0">Current Time Feed</h4>
@@ -401,5 +429,168 @@
         });
     }
 </script>
+
+<script>
+(() => {
+    const button = document.getElementById(
+        "refresh-personalized-feed"
+    );
+    const status = document.getElementById(
+        "personalized-feed-status"
+    );
+    const results = document.getElementById(
+        "personalized-feed-results"
+    );
+
+    if (!button || !status || !results) return;
+
+    const currentBlock = {{ current_block | default('Morning') | tojson }};
+
+    function createCard(item, contentType) {
+        const col = document.createElement("div");
+        col.className = "col-12 col-md-6 col-lg-4";
+
+        const card = document.createElement("div");
+        card.className = "card h-100 shadow-sm";
+
+        const imageUrl = item.image_url || "";
+        if (/^https?:\/\//i.test(imageUrl)) {
+            const image = document.createElement("img");
+            image.src = imageUrl;
+            image.alt = "";
+            image.loading = "lazy";
+            image.className = "card-img-top";
+            image.style.height = "160px";
+            image.style.objectFit = "cover";
+            card.appendChild(image);
+        }
+
+        const body = document.createElement("div");
+        body.className = "card-body d-flex flex-column";
+
+        const badge = document.createElement("span");
+        badge.className = contentType === "video"
+            ? "badge bg-danger align-self-start mb-2"
+            : "badge bg-primary align-self-start mb-2";
+        badge.textContent = contentType === "video"
+            ? "YouTube Video"
+            : "Article";
+
+        const title = document.createElement("h6");
+        title.className = "card-title";
+        title.textContent = item.title || "Untitled";
+
+        const description = document.createElement("p");
+        description.className = "card-text small text-muted";
+        description.textContent = (
+            item.snippet || item.content || ""
+        ).slice(0, 180);
+
+        const link = document.createElement("a");
+        link.className = "btn btn-sm btn-outline-primary mt-auto";
+        link.textContent = contentType === "video"
+            ? "Watch Video"
+            : "Read Article";
+
+        try {
+            const url = new URL(item.url);
+            if (!["http:", "https:"].includes(url.protocol)) {
+                return null;
+            }
+            link.href = url.href;
+        } catch {
+            return null;
+        }
+
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+
+        body.append(badge, title, description, link);
+        card.appendChild(body);
+        col.appendChild(card);
+
+        return col;
+    }
+
+    async function loadPersonalizedFeed() {
+        button.disabled = true;
+        status.textContent = "Generating personalized recommendations...";
+        results.replaceChildren();
+
+        try {
+            const response = await fetch(
+                "/api/dashboard/generate-recommendations",
+                { credentials: "same-origin" }
+            );
+
+            const payload = await response.json();
+
+            if (!response.ok || !payload.success) {
+                throw new Error(
+                    payload.error ||
+                    payload.message ||
+                    "Unable to generate recommendations"
+                );
+            }
+
+            const groups = payload.data || {};
+            const activeGroups = groups[currentBlock] || [];
+            const selectedGroups = activeGroups.length
+                ? activeGroups
+                : Object.values(groups).flat();
+
+            const seen = new Set();
+            let rendered = 0;
+
+            for (const group of selectedGroups) {
+                const candidates = [
+                    ...(group.articles || []).map(item => ({
+                        ...item,
+                        contentType: "article"
+                    })),
+                    ...(group.videos || []).map(item => ({
+                        ...item,
+                        contentType: "video"
+                    }))
+                ];
+
+                candidates.sort(
+                    (a, b) =>
+                        (b.recommendation_score || 0) -
+                        (a.recommendation_score || 0)
+                );
+
+                for (const item of candidates) {
+                    if (!item.url || seen.has(item.url)) continue;
+
+                    const card = createCard(
+                        item,
+                        item.contentType
+                    );
+
+                    if (!card) continue;
+
+                    seen.add(item.url);
+                    results.appendChild(card);
+                    rendered++;
+                }
+            }
+
+            status.textContent = rendered
+                ? `Showing ${rendered} personalized recommendations`
+                : "No recommendations were found.";
+
+        } catch (error) {
+            status.textContent =
+                `Unable to load personalized feed: ${error.message}`;
+        } finally {
+            button.disabled = false;
+        }
+    }
+
+    button.addEventListener("click", loadPersonalizedFeed);
+})();
+</script>
+
 </body>
 </html>

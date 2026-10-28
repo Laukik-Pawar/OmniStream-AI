@@ -134,6 +134,33 @@ class MLService:
                 cluster_genres[cluster_id] = "General"
                 
         return cluster_genres
+    
+    @staticmethod
+    def build_search_query(genre, keywords):
+        """Build a readable, interest-focused search query."""
+        keywords = [
+            str(keyword).strip().lower()
+            for keyword in keywords
+            if str(keyword).strip()
+        ]
+
+        # Preserve order while removing duplicate keywords.
+        keywords = list(dict.fromkeys(keywords))[:3]
+
+        if not keywords:
+            return ""
+
+        topic = " ".join(keywords)
+        genre = str(genre or "").strip()
+
+        # Avoid generic search filler and repetitive genre terms.
+        if genre.lower() in {"general", "unknown"}:
+            return topic
+
+        if genre.lower() in keywords:
+            return topic
+
+        return f"{topic} {genre.lower()}"
 
     @staticmethod
     def categorize_content(content_items, num_categories=5):
@@ -282,8 +309,26 @@ class MLService:
                 
                 block_queries = []
                 for cluster_id in top_clusters:
-                    raw_keywords = " ".join(cluster_terms[cluster_id])
+                    
+                    keywords = cluster_terms[cluster_id]
                     genre = cluster_genres.get(cluster_id, "General")
+
+                    query = MLService.build_search_query(
+                        genre,
+                        keywords
+                    )
+
+                    if not query:
+                        continue
+
+                    block_queries.append({
+                        "query": query,
+                        "genre": genre,
+                        "keywords": keywords,
+                        "cluster_id": int(cluster_id),
+                        "query_strategy": "tfidf_cluster"
+                    })
+
 
                     # Keep the query useful if history has no extractable keywords.
                     anchored_query = f"{genre} {raw_keywords}".strip()
