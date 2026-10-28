@@ -1,643 +1,741 @@
 <!DOCTYPE html>
+
 <html lang="en">
+
 <head>
+
     <meta charset="UTF-8">
+
     <title>OmniStream-AI | Temporal Dashboard</title>
+
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
 </head>
+
 <body class="bg-light">
+
 <div class="container mt-5">
+
     <div class="d-flex justify-content-between align-items-center mb-4">
+
         <div>
+
             <h2 class="mb-0">Temporal Analytics Dashboard</h2>
+
             <small class="text-muted">Multi-platform behavior analysis & ML categorization</small>
+
         </div>
+
         <div class="d-flex gap-2 align-items-center">
+
             <!-- Platform Connection Buttons -->
+
             {% if session.get('reddit_credentials') %}
+
                 <a href="{{ url_for('auth.youtube_login') }}" class="btn btn-danger btn-sm">
+
                     <i class="bi bi-youtube"></i> Connect YouTube
+
                 </a>
+
             {% else %}
+
                 <a href="{{ url_for('auth.reddit_login') }}" class="btn btn-warning btn-sm text-dark">
+
                     <i class="bi bi-reddit"></i> Connect Reddit First
+
                 </a>
+
             {% endif %}
+
             <a href="{{ url_for('auth.status') }}" class="btn btn-outline-secondary btn-sm">Connection Status</a>
+
         </div>
+
     </div>
 
     <!-- Flash Message Handling -->
+
     {% with messages = get_flashed_messages(with_categories=true) %}
+
       {% if messages %}
+
         {% for category, message in messages %}
+
           <div class="alert alert-{{ category }} alert-dismissible fade show shadow-sm" role="alert">
+
             {{ message }}
+
             <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+
           </div>
+
         {% endfor %}
+
       {% endif %}
+
     {% endwith %}
 
     {% if data %}
+
         <!-- Navigation Tabs -->
+
         <ul class="nav nav-pills mb-4" id="dashboardTabs" role="tablist">
+
             <li class="nav-item" role="presentation">
+
                 <button class="nav-link active" id="temporal-tab" data-bs-toggle="pill" data-bs-target="#temporal-view" type="button" role="tab">
+
                     Temporal View (last 14 days)
+
                 </button>
+
             </li>
+
             <li class="nav-item" role="presentation">
+
                 <button class="nav-link" id="genre-tab" data-bs-toggle="pill" data-bs-target="#genre-view" type="button" role="tab">
+
                     Genre & Temporal Analysis
+
                 </button>
+
             </li>
+
             <li class="nav-item" role="presentation">
+
                 <button class="nav-link" id="recommendations-tab" data-bs-toggle="pill" data-bs-target="#recommendations-view" type="button" role="tab">
+
                     Recommendations(15 feeds of Reddit and 10 for YT)
+
                 </button>
+
             </li>
+
         </ul>
 
         <div class="tab-content" id="dashboardTabsContent">
+
             <!-- TAB 1: Temporal View (By Time of Day) -->
+
             <div class="tab-pane fade show active" id="temporal-view" role="tabpanel">
+
                 {% for time_block, items in data.items() %}
+
                     <div class="mb-5">
+
                         <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-3">
+
                             <h4 class="text-primary mb-0">{{ time_block | capitalize }}</h4>
+
                             <span class="badge bg-secondary rounded-pill">{{ items | length }} interactions</span>
+
                         </div>
-                        
+
                         <div class="row row-cols-1 row-cols-md-3 g-4">
+
                             {% for item in items %}
+
                                 <div class="col">
+
                                     <div class="card h-100 shadow-sm border-{{ 'danger' if item.source == 'youtube' else 'warning' }}">
+
                                         <div class="card-header bg-transparent border-0 pt-3 d-flex justify-content-between align-items-center">
+
                                             <div>
+
                                                 <span class="badge bg-{{ 'danger' if item.source == 'youtube' else 'warning text-dark' }}">
+
                                                     {{ item.source | capitalize }}
+
                                                 </span>
+
                                                 {% set genre_label = item.genre or item.category or item.label %}
+
                                                 {% if genre_label %}
+
                                                     <span class="badge bg-info text-dark ms-1">{{ genre_label }}</span>
+
                                                 {% endif %}
+
                                             </div>
+
                                             <small class="text-muted">{{ item.timestamp[:16] if item.timestamp else 'N/A' }}</small>
+
                                         </div>
+
                                         <div class="card-body">
+
                                             <h6 class="card-title">{{ item.title }}</h6>
+
                                             <p class="card-text small text-muted" style="display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;">
+
                                                 {{ item.content | default('No description available.', true) }}
+
                                             </p>
+
                                         </div>
+
                                         {% if item.url %}
+
                                             <div class="card-footer bg-transparent border-0 pt-0 pb-3">
+
                                                 <a href="{{ item.url }}" target="_blank" class="btn btn-sm btn-outline-primary w-100">View Content</a>
+
                                             </div>
+
                                         {% endif %}
+
                                     </div>
+
                                 </div>
+
                             {% else %}
+
                                 <div class="col-12">
+
                                     <p class="text-muted fst-italic">No interactions recorded for this time block.</p>
+
                                 </div>
+
                             {% endfor %}
+
                         </div>
+
                     </div>
+
                 {% endfor %}
+
             </div>
 
             <!-- TAB 2: Genre & Temporal Analysis -->
+
             <div class="tab-pane fade" id="genre-view" role="tabpanel">
+
                 <div class="card shadow-sm border-0 mb-4">
+
                     <div class="card-body">
+
                         <h5 class="card-title mb-1">Genre Distribution Across Time of Day</h5>
+
                         <p class="text-muted small mb-4">Visualizing content genre volume across temporal blocks</p>
+
                         <div style="position: relative; height: 350px;">
+
                             <canvas id="genreTemporalChart"></canvas>
+
                         </div>
+
                     </div>
+
                 </div>
 
                 <div class="mb-4">
+
                     <h5 class="border-bottom pb-2 mb-3">Content Categorized by Genre</h5>
+
                     <div class="accordion" id="genreAccordion">
+
                         <!-- Populated dynamically via JavaScript -->
+
                     </div>
+
                 </div>
+
             </div>
 
             <!-- TAB 3: Recommendations -->
+
             <div class="tab-pane fade" id="recommendations-view" role="tabpanel">
-                
-<!-- Live personalized recommendations -->
-<section id="personalized-feed" class="mb-4">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <div>
-            <h5 class="mb-1">Recommended For You</h5>
-            <small class="text-muted">
-                Articles and videos selected from your interests
-            </small>
-        </div>
-        <button
-            id="refresh-personalized-feed"
-            type="button"
-            class="btn btn-sm btn-outline-primary"
-        >
-            <i class="bi bi-arrow-clockwise"></i> Generate Feed
-        </button>
-    </div>
-
-    <div id="personalized-feed-status" class="small text-muted mb-3">
-        Select Generate Feed to discover personalized content.
-    </div>
-
-
-    
-<details class="mb-3 border rounded p-3">
-    <summary class="fw-semibold" style="cursor:pointer">
-        Recommendation Debug View
-    </summary>
-    <p class="small text-muted mt-2">
-        Actual search queries and keywords used to discover content.
-    </p>
-    <div id="recommendation-debug-results"></div>
-</details>
-
-
-    <div id="personalized-feed-results" class="row g-3"></div>
-</section>
-
-<hr class="my-4">
 
                 <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-4">
+
                     <div>
+
                         <h4 class="text-primary mb-0">Current Time Feed</h4>
+
                         <small class="text-muted">Top interest categories for your <strong class="text-primary">{{ current_block }}</strong> habits.</small>
+
                     </div>
+
                     <span class="badge bg-primary rounded-pill">Targeted Search Blocks</span>
+
                 </div>
 
                 <div class="d-flex flex-column gap-5">
+
                     {% if recommendations %}
+
                         {% set ns = namespace(genres=[]) %}
+
                         {% for rec in recommendations %}
+
                             {% if rec.genre not in ns.genres %}
+
                                 {% set ns.genres = ns.genres + [rec.genre] %}
+
                             {% endif %}
+
                         {% endfor %}
 
                         {% for genre in ns.genres %}
+
                             {% set row_items = recommendations | selectattr("genre", "equalto", genre) | list %}
-                            
+
                             <div class="genre-section mt-4">
+
                                 <div class="mb-3">
+
                                     <h5 class="mb-0 text-secondary">{{ genre }}</h5>
+
                                 </div>
 
                                 <div class="d-flex gap-3 overflow-auto pb-2 genre-scroll-track" 
+
                                      data-query="{{ genre }}" 
+
                                      data-offset="4" 
+
                                      style="scrollbar-width: thin;">
-                                    
+
                                     {% for item in row_items %}
+
                                         <div class="card shadow-sm flex-shrink-0" style="width: 280px; border-radius: 8px;">
+
                                             {% if item.image_url %}
+
                                                 <img src="{{ item.image_url }}" class="card-img-top" alt="Preview" style="height: 140px; object-fit: cover; border-top-left-radius: 8px; border-top-right-radius: 8px;">
+
                                             {% endif %}
+
                                             <div class="card-body d-flex flex-column">
+
                                                 <h6 class="card-title" style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 0.95rem;">
+
                                                     <a href="{{ item.url }}" target="_blank" class="text-decoration-none text-dark">{{ item.title }}</a>
+
                                                 </h6>
+
                                                 <p class="card-text small text-muted" style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
+
                                                     {{ item.snippet }}
+
                                                 </p>
+
                                                 <div class="mt-auto">
+
                                                     <span class="badge bg-light text-dark border">{{ item.source_domain }}</span>
+
                                                 </div>
+
                                             </div>
+
                                         </div>
+
                                     {% endfor %}
 
                                     <div class="scroll-trigger flex-shrink-0 d-flex align-items-center justify-content-center text-muted px-4 border rounded bg-white" style="width: 140px; height: 100%;">
+
                                         <small><i class="bi bi-three-dots"></i> Loading...</small>
+
                                     </div>
+
                                 </div>
+
                             </div>
+
                         {% endfor %}
+
                     {% else %}
+
                         <div class="text-center py-5">
+
                             <p class="text-muted">No recommendations recorded for this time block yet.</p>
+
                         </div>
+
                     {% endif %}
+
                 </div>
+
             </div>
+
         </div>
+
     {% else %}
+
         <!-- Empty State -->
+
         <div class="alert alert-white border text-center py-5 shadow-sm">
+
             <h5 class="text-muted">No Temporal Data Available</h5>
+
             <p>Connect your platforms to generate personalized time clusters.</p>
-            
+
             {% if session.get('reddit_credentials') %}
+
                 <a href="{{ url_for('auth.youtube_login') }}" class="btn btn-danger mt-3">
+
                     <i class="bi bi-youtube"></i> Connect YouTube
+
                 </a>
+
             {% else %}
+
                 <p class="text-muted small mt-2">Please connect Reddit first so both platforms share the same identity.</p>
+
                 <a href="{{ url_for('auth.reddit_login') }}" class="btn btn-warning mt-2 text-dark">
+
                     <i class="bi bi-reddit"></i> Connect Reddit First
+
                 </a>
+
             {% endif %}
+
         </div>
+
     {% endif %}
+
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
 <script>
+
     const dataByTime = {{ data | tojson if data else '{}' }};
 
     if (dataByTime && Object.keys(dataByTime).length > 0) {
+
         const timeBlocks = ['night', 'morning', 'afternoon', 'evening'];
-        
+
         const palette = [
+
             '#0d6efd', '#198754', '#dc3545', '#ffc107', 
+
             '#0dcaf0', '#6610f2', '#fd7e14', '#20c997', 
+
             '#6f42c1', '#d63384', '#6c757d', '#055160'
+
         ];
 
         const genreDataMap = {};
+
         const genreItemsMap = {};
 
         timeBlocks.forEach((block, blockIndex) => {
+
             const items = dataByTime[block] || [];
+
             items.forEach(item => {
+
                 const genre = item.genre || item.category || item.label || 'Uncategorized';
-                
+
                 if (!genreDataMap[genre]) {
+
                     genreDataMap[genre] = [0, 0, 0, 0];
+
                     genreItemsMap[genre] = [];
+
                 }
+
                 genreDataMap[genre][blockIndex] += 1;
+
                 genreItemsMap[genre].push({ ...item, timeBlock: block });
+
             });
+
         });
 
         const genres = Object.keys(genreDataMap);
+
         const datasets = genres.map((genre, idx) => ({
+
             label: genre,
+
             data: genreDataMap[genre],
+
             backgroundColor: palette[idx % palette.length],
+
             stack: 'combinedStack'
+
         }));
 
         const ctx = document.getElementById('genreTemporalChart').getContext('2d');
+
         new Chart(ctx, {
+
             type: 'bar',
+
             data: {
+
                 labels: ['Night (12am-6am)', 'Morning (6am-12pm)', 'Afternoon (12pm-6pm)', 'Evening (6pm-12am)'],
+
                 datasets: datasets
+
             },
+
             options: {
+
                 responsive: true,
+
                 maintainAspectRatio: false,
+
                 plugins: {
+
                     legend: { position: 'top' },
+
                     tooltip: { mode: 'index', intersect: false }
+
                 },
+
                 scales: {
+
                     x: {
+
                         stacked: true,
+
                         title: { display: true, text: 'Time of Day' }
+
                     },
+
                     y: {
+
                         stacked: true,
+
                         beginAtZero: true,
+
                         ticks: { stepSize: 1 },
+
                         title: { display: true, text: 'Number of Interactions' }
+
                     }
+
                 }
+
             }
+
         });
 
         const accordion = document.getElementById('genreAccordion');
+
         genres.forEach((genre, idx) => {
+
             const items = genreItemsMap[genre];
+
             const collapseId = `collapse_${idx}`;
+
             const headingId = `heading_${idx}`;
 
             const itemCards = items.map(item => `
+
                 <div class="col-md-6 mb-3">
+
                     <div class="card h-100 shadow-sm border-light">
+
                         <div class="card-body">
+
                             <div class="d-flex justify-content-between align-items-center mb-2">
+
                                 <span class="badge bg-${item.source === 'youtube' ? 'danger' : 'warning text-dark'}">
+
                                     ${item.source.toUpperCase()}
+
                                 </span>
+
                                 <span class="badge bg-secondary text-capitalize">${item.timeBlock}</span>
+
                             </div>
+
                             <h6 class="card-title text-truncate" title="${item.title}">${item.title}</h6>
+
                             <p class="card-text small text-muted" style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
+
                                 ${item.content || 'No description available.'}
+
                             </p>
+
                         </div>
+
                         ${item.url ? `
+
                             <div class="card-footer bg-transparent border-0 pt-0 pb-3">
+
                                 <a href="${item.url}" target="_blank" class="btn btn-sm btn-outline-secondary w-100">Open Interaction</a>
+
                             </div>
+
                         ` : ''}
+
                     </div>
+
                 </div>
+
             `).join('');
 
             const accordionItem = `
+
                 <div class="accordion-item shadow-sm mb-2 border-0">
+
                     <h2 class="accordion-header" id="${headingId}">
+
                         <button class="accordion-button ${idx !== 0 ? 'collapsed' : ''}" type="button" data-bs-toggle="collapse" data-bs-target="#${collapseId}">
+
                             <strong>${genre}</strong>
+
                             <span class="badge bg-primary rounded-pill ms-2">${items.length}</span>
+
                         </button>
+
                     </h2>
+
                     <div id="${collapseId}" class="accordion-collapse collapse ${idx === 0 ? 'show' : ''}" data-bs-parent="#genreAccordion">
+
                         <div class="accordion-body bg-light">
+
                             <div class="row">
+
                                 ${itemCards}
+
                             </div>
+
                         </div>
+
                     </div>
+
                 </div>
+
             `;
+
             accordion.insertAdjacentHTML('beforeend', accordionItem);
+
         });
 
         // Horizontal infinite scroll
+
         const observer = new IntersectionObserver((entries) => {
+
             entries.forEach(entry => {
+
                 if (entry.isIntersecting) {
+
                     const trigger = entry.target;
+
                     const track = trigger.closest('.genre-scroll-track');
-                    
+
                     const query = track.getAttribute('data-query');
+
                     let offset = parseInt(track.getAttribute('data-offset'));
 
                     if (offset > 46 || !query) {
+
                         trigger.style.display = 'none'; 
+
                         return;
+
                     }
 
                     fetch(`/api/recommendations?q=${encodeURIComponent(query)}&offset=${offset}`)
+
                         .then(response => response.json())
+
                         .then(data => {
+
                             if (data.length === 0) {
+
                                 trigger.style.display = 'none';
+
                                 return;
+
                             }
 
                             data.forEach(item => {
+
                                 const card = document.createElement('div');
+
                                 card.className = 'card shadow-sm flex-shrink-0';
+
                                 card.style.width = '280px';
+
                                 card.style.borderRadius = '8px';
-                                
+
                                 let imageHtml = item.image_url 
+
                                     ? `<img src="${item.image_url}" class="card-img-top" style="height: 140px; object-fit: cover; border-top-left-radius: 8px; border-top-right-radius: 8px;">` 
+
                                     : '';
 
                                 card.innerHTML = `
+
                                     ${imageHtml}
+
                                     <div class="card-body d-flex flex-column">
+
                                         <h6 class="card-title" style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 0.95rem;">
+
                                             <a href="${item.url || item.link}" target="_blank" class="text-decoration-none text-dark">${item.title}</a>
+
                                         </h6>
+
                                         <p class="card-text small text-muted" style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
+
                                             ${item.snippet}
+
                                         </p>
+
                                         <div class="mt-auto">
+
                                             <span class="badge bg-light text-dark border">${item.source_domain || 'Web'}</span>
+
                                         </div>
+
                                     </div>
+
                                 `;
+
                                 track.insertBefore(card, trigger);
+
                             });
 
                             track.setAttribute('data-offset', offset + data.length);
+
                         })
+
                         .catch(error => {
+
                             console.error("Error loading recommendations:", error);
+
                             trigger.style.display = 'none';
+
                         });
+
                 }
+
             });
+
         }, {
+
             root: null, 
+
             rootMargin: '0px 150px 0px 0px', 
+
             threshold: 0.1 
+
         });
 
         document.querySelectorAll('.scroll-trigger').forEach(trigger => {
+
             observer.observe(trigger);
+
         });
-    }
-</script>
 
-<script>
-(() => {
-    const button = document.getElementById(
-        "refresh-personalized-feed"
-    );
-    const status = document.getElementById(
-        "personalized-feed-status"
-    );
-    const results = document.getElementById(
-        "personalized-feed-results"
-    );
-const debugResults = document.getElementById(
-    "recommendation-debug-results"
-);
-    if (!button || !status || !results) return;
-
-    const currentBlock = {{ current_block | default('Morning') | tojson }};
-
-    function createCard(item, contentType) {
-        const col = document.createElement("div");
-        col.className = "col-12 col-md-6 col-lg-4";
-
-        const card = document.createElement("div");
-        card.className = "card h-100 shadow-sm";
-
-        const imageUrl = item.image_url || "";
-if (/^https?:\/\//i.test(imageUrl)) {
-                const image = document.createElement("img");
-            image.src = imageUrl;
-            image.alt = "";
-            image.loading = "lazy";
-            image.className = "card-img-top";
-            image.style.height = "160px";
-            image.style.objectFit = "cover";
-            card.appendChild(image);
-        }
-
-        const body = document.createElement("div");
-        body.className = "card-body d-flex flex-column";
-
-        const badge = document.createElement("span");
-        badge.className = contentType === "video"
-            ? "badge bg-danger align-self-start mb-2"
-            : "badge bg-primary align-self-start mb-2";
-        badge.textContent = contentType === "video"
-            ? "YouTube Video"
-            : "Article";
-
-        const title = document.createElement("h6");
-        title.className = "card-title";
-        title.textContent = item.title || "Untitled";
-
-        const description = document.createElement("p");
-        description.className = "card-text small text-muted";
-        description.textContent = (
-            item.snippet || item.content || ""
-        ).slice(0, 180);
-
-        const link = document.createElement("a");
-        link.className = "btn btn-sm btn-outline-primary mt-auto";
-        link.textContent = contentType === "video"
-            ? "Watch Video"
-            : "Read Article";
-
-        try {
-            const url = new URL(item.url);
-            if (!["http:", "https:"].includes(url.protocol)) {
-                return null;
-            }
-            link.href = url.href;
-        } catch {
-            return null;
-        }
-
-        link.target = "_blank";
-        link.rel = "noopener noreferrer";
-
-        body.append(badge, title, description, link);
-        card.appendChild(body);
-        col.appendChild(card);
-
-        return col;
     }
 
-    async function loadPersonalizedFeed() {
-        button.disabled = true;
-        status.textContent = "Generating personalized recommendations...";
-        results.replaceChildren();
-if (debugResults) debugResults.replaceChildren();
-        try {
-            const response = await fetch(
-                "/api/dashboard/generate-recommendations",
-                { credentials: "same-origin" }
-            );
-
-            const payload = await response.json();
-
-            if (!response.ok || !payload.success) {
-                throw new Error(
-                    payload.error ||
-                    payload.message ||
-                    "Unable to generate recommendations"
-                );
-            }
-
-            const groups = payload.data || {};
-            const activeGroups = groups[currentBlock] || [];
-            // const selectedGroups = activeGroups.length
-            //     ? activeGroups
-            //     : Object.values(groups).flat();
-
-            const seen = new Set();
-            let rendered = 0;
-
-            for (const group of selectedGroups) {
-                
-                if (debugResults) {
-                    const entry = document.createElement("div");
-                    entry.className = "border-bottom py-3";
-
-                    const genre = document.createElement("div");
-                    genre.className = "fw-semibold mb-2";
-                    genre.textContent = `Genre: ${group.genre || "General"}`;
-
-                    const query = document.createElement("div");
-                    query.className = "small mb-2";
-                    query.textContent =
-                        `Google query: ${group.query || "N/A"}`;
-
-                    const keywords = document.createElement("div");
-                    keywords.className = "small text-muted";
-                    keywords.textContent =
-                        `Extracted keywords: ${
-                            (group.keywords || []).join(", ") || "None"
-                        }`;
-
-                    const strategy = document.createElement("div");
-                    strategy.className = "small text-muted";
-                    strategy.textContent =
-                        `Strategy: ${group.query_strategy || "unknown"}`;
-
-                    entry.append(
-                        genre, query, keywords, strategy
-                    );
-                    debugResults.appendChild(entry);
-                }
-
-                const candidates = [
-                    ...(group.articles || []).map(item => ({
-                        ...item,
-                        contentType: "article"
-                    })),
-                    ...(group.videos || []).map(item => ({
-                        ...item,
-                        contentType: "video"
-                    }))
-                ];
-
-                candidates.sort(
-                    (a, b) =>
-                        (b.recommendation_score || 0) -
-                        (a.recommendation_score || 0)
-                );
-
-                for (const item of candidates) {
-                    if (!item.url || seen.has(item.url)) continue;
-
-                    const card = createCard(
-                        item,
-                        item.contentType
-                    );
-
-                    if (!card) continue;
-
-                    seen.add(item.url);
-                    results.appendChild(card);
-                    rendered++;
-                }
-            }
-
-            status.textContent = rendered
-                ? `Showing ${rendered} personalized recommendations`
-                : "No recommendations were found.";
-
-        } catch (error) {
-            status.textContent =
-                `Unable to load personalized feed: ${error.message}`;
-        } finally {
-            button.disabled = false;
-        }
-    }
-
-    button.addEventListener("click", loadPersonalizedFeed);
-})();
 </script>
 
 </body>
+
 </html>
