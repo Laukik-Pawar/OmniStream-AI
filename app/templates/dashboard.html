@@ -800,6 +800,81 @@
 
     }
 
+const experimentalButton = document.getElementById(
+    "generate-experimental-queries"
+);
+
+const experimentalStatus = document.getElementById(
+    "experimental-query-status"
+);
+
+const experimentalResults = document.getElementById(
+    "experimental-query-results"
+);
+
+if (experimentalButton) {
+    experimentalButton.addEventListener("click", async () => {
+        experimentalButton.disabled = true;
+        experimentalStatus.textContent = "Generating queries...";
+        experimentalResults.replaceChildren();
+
+        try {
+            const response = await fetch(
+                "/api/dashboard/experimental/queries",
+                { credentials: "same-origin" }
+            );
+
+            const data = await response.json();
+
+            if (!response.ok || !data.success) {
+                throw new Error(
+                    data.error || "Unable to generate queries."
+                );
+            }
+
+            experimentalStatus.textContent =
+                `Analyzed ${data.source_count || 0} interactions.`;
+
+            if (!data.queries || data.queries.length === 0) {
+                experimentalResults.textContent =
+                    "No search queries could be generated.";
+                return;
+            }
+
+            data.queries.forEach((item, index) => {
+                const card = document.createElement("div");
+                card.className = "card mb-3 border-0 bg-light";
+
+                const body = document.createElement("div");
+                body.className = "card-body";
+
+                const heading = document.createElement("h6");
+                heading.className = "text-primary";
+                heading.textContent = `Query ${index + 1}`;
+
+                const query = document.createElement("p");
+                query.className = "fw-semibold mb-2";
+                query.textContent = item.query || "";
+
+                const keywords = document.createElement("p");
+                keywords.className = "small text-muted mb-0";
+                keywords.textContent =
+                    "Keywords: " + (item.keywords || []).join(", ");
+
+                body.append(heading, query, keywords);
+                card.appendChild(body);
+                experimentalResults.appendChild(card);
+            });
+
+        } catch (error) {
+            experimentalStatus.textContent =
+                `Error: ${error.message}`;
+        } finally {
+            experimentalButton.disabled = false;
+        }
+    });
+}
+
 </script>
 
 </body>
