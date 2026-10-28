@@ -126,3 +126,84 @@ def ingest_reddit():
             'success': False,
             'error': str(e)
         }), 500
+
+
+@dashboard_bp.route('/experimental/queries', methods=['GET'])
+def experimental_queries():
+    """Preview search queries without running the recommendation pipeline."""
+    if 'reddit_credentials' not in session:
+        return jsonify({
+            'success': False,
+            'error': 'Connect Reddit to test search queries.'
+        }), 401
+
+    try:
+        reddit_service = RedditService(session['reddit_credentials'])
+        history = reddit_service.fetch_history(limit=15) or []
+
+        from sklearn.feature_extraction.text import (
+            TfidfVectorizer,
+            ENGLISH_STOP_WORDS
+        )
+
+        documents = [
+            f"{item.get('title', '')} {item.get('content', '')}".strip()
+            for item in history
+        ]
+
+        documents = [doc for doc in documents if doc]
+
+        if not documents:
+            return jsonify({
+                'success': True,
+                'queries': [],
+                'message': 'No usable Reddit history found.'
+            })
+
+        vectorizer = TfidfVectorizer(
+            stop_words='english',
+            max_features=100,
+            ngram_range=(1, 2)
+        )
+
+        matrix = vectorizer.fit_transform(documents)
+        scores = matrix.sum(axis=0).A1
+        terms = vectorizer.get_feature_names_out()
+
+        ranked = sorted(
+            zip(terms, scores),
+            key=lambda pair: pair[1],
+            reverse=True
+        )
+
+        keywords = [
+            term for term, score in ranked[:10]
+        ]
+
+        queries = [
+            {
+                'keywords': keywords[i:i + 3],
+                'query': ' '.join(keywords[i:i + 3])
+            }
+            for i in range(0, min(len(keywords), 6), 3)
+        ]
+
+        return jsonify({
+            'success': True,
+            'source_count': len(history),
+            'queries': queries
+        })
+
+    except ValueError as exc:
+        return jsonify({
+            'success': False,
+            'error': str(exc)
+        }), 400
+
+    except Exception:
+        import logging
+        logging.exception('Experimental query preview failed')
+        return jsonify({
+            'success': False,
+            'error': 'Unable to generate query preview.'
+        }), 500
