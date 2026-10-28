@@ -550,9 +550,9 @@ if (debugResults) debugResults.replaceChildren();
 
             const groups = payload.data || {};
             const activeGroups = groups[currentBlock] || [];
-            const selectedGroups = activeGroups.length
-                ? activeGroups
-                : Object.values(groups).flat();
+            // const selectedGroups = activeGroups.length
+            //     ? activeGroups
+            //     : Object.values(groups).flat();
 
             const seen = new Set();
             let rendered = 0;
