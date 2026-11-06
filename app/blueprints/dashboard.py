@@ -1,7 +1,7 @@
 
 from flask import Blueprint, jsonify, session, request
 from app.services.reddit_service import RedditService
-# from app.services.youtube_service import YouTubeService
+from app.services.youtube_service import YouTubeService
 # from app.services.ml_service import MLService
 from app.services.content_service import ContentService
 # from app.services.recommendation_engine import RecommendationEngine
@@ -143,8 +143,23 @@ def experimental_queries():
         import logging
         from sklearn.feature_extraction.text import TfidfVectorizer
 
+        
         reddit_service = RedditService(session['reddit_credentials'])
-        history = reddit_service.fetch_history(limit=15) or []
+        reddit_history = reddit_service.fetch_history(limit=15) or []
+
+        youtube_history = []
+
+        if session.get('youtube_credentials'):
+            try:
+                youtube_history = YouTubeService.fetch_liked_videos(
+                    session['youtube_credentials'],
+                    limit=15
+                ) or []
+            except Exception:
+                logging.exception('YouTube history fetch failed')
+
+        history = reddit_history + youtube_history
+
 
         # Use each interaction as its own document.
         documents = []
@@ -262,11 +277,15 @@ def experimental_queries():
             if len(queries) == 5:
                 break
 
+        
         return jsonify({
             'success': True,
             'source_count': len(history),
+            'reddit_count': len(reddit_history),
+            'youtube_count': len(youtube_history),
             'queries': queries
         })
+
 
     except ValueError as exc:
         return jsonify({
