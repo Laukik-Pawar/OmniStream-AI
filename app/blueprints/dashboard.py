@@ -162,120 +162,179 @@ def experimental_queries():
 
 
         # Use each interaction as its own document.
-        documents = []
+        
+        # STEP 11: Context-preserving query generation.
+        # Use TF-IDF to identify useful interactions, but
+        # preserve title phrases when constructing queries.
 
-        for item in history:
-            title = str(item.get('title') or '').strip()
-            content = str(item.get('content') or '').strip()
-
-            # Titles are often more focused than full post bodies.
-            text = f"{title} {title} {content[:500]}".strip()
-
-            if text:
-                documents.append(text)
-
-        if not documents:
-            return jsonify({
-                'success': True,
-                'source_count': len(history),
-                'queries': [],
-                'message': 'No usable Reddit history found.'
-            })
-
-        # Ignore common Reddit / conversational filler.
-        custom_stopwords = {
-            'reddit', 'post', 'comment', 'comments',
-            'subreddit', 'deleted', 'removed',
-            'https', 'http', 'www',
-            'hope', 'think', 'really', 'just',
-            'like', 'know', 'want', 'got',
-            'did', 'does', 'doing', 'thing',
-            'things', 'people', 'today'
-        }
-
-        vectorizer = TfidfVectorizer(
-            stop_words='english',
-            max_features=500,
-            ngram_range=(1, 2),
-            token_pattern=r'(?u)\b[a-zA-Z][a-zA-Z0-9]+\b',
-            sublinear_tf=True
+        import re
+        from sklearn.feature_extraction.text import (
+            TfidfVectorizer,
+            ENGLISH_STOP_WORDS
         )
 
-        matrix = vectorizer.fit_transform(documents)
-        terms = vectorizer.get_feature_names_out()
+        def clean_title(title):
+            title = str(title or "")
 
+            # Convert hashtags into searchable words.
+            title = re.sub(r"#(?=\w)", " ", title)
+
+            # Remove URLs, emojis and unnecessary punctuation.
+            title = re.sub(r"https?://\S+", " ", title)
+            title = re.sub(r"[^\w\s'-]", " ", title)
+
+            # Remove common conversational filler.
+            filler = {
+                "guys", "please", "hey", "omg", "lol",
+                "official", "viral", "new", "latest"
+            }
+
+            words = [
+                word for word in title.split()
+                if word.lower() not in filler
+            ]
+
+            return " ".join(words).strip()
+
+        # Build one candidate per interaction.
         candidates = []
 
-        for doc_index, document in enumerate(documents):
-            row = matrix.getrow(doc_index)
+        for item in history:
+            title = clean_title(item.get("title"))
+            source = item.get("source", "unknown")
 
-            ranked_terms = sorted(
-                zip(row.indices, row.data),
-                key=lambda pair: pair[1],
-                reverse=True
-            )
-
-            selected = []
-            used_words = set()
-
-            for term_index, score in ranked_terms:
-                term = terms[term_index]
-                words = term.lower().split()
-
-                # Reject generic or noisy phrases.
-                if any(word in custom_stopwords for word in words):
-                    continue
-
-                # Avoid repeated words across selected phrases.
-                if any(word in used_words for word in words):
-                    continue
-
-                selected.append(term)
-                used_words.update(words)
-
-                if len(selected) == 3:
-                    break
-
-            if len(selected) < 2:
+            if not title:
                 continue
 
-            query = ' '.join(selected)
+            words = title.split()
+
+            # Reject extremely short or generic titles.
+            if len(words) < 2:
+                continue
+
+            # Keep the title's word order and context.
+            query = " ".join(words[:10])
 
             candidates.append({
-                'keywords': selected,
-                'query': query,
-                'score': float(sum(
-                    matrix[doc_index, vectorizer.vocabulary_[term]]
-                    for term in selected
-                ))
+                "query": query,
+                "keywords": words[:10],
+                "source": source,
+                "title": item.get("title", "")
             })
 
-        # Prefer stronger candidates while avoiding duplicates.
-        candidates.sort(
-            key=lambda item: item['score'],
-            reverse=True
-        )
-
-        queries = []
+        # Remove exact duplicate queries.
+        unique_candidates = []
         seen = set()
 
-        for candidate in candidates:
-            normalized = re.sub(
-                r'\s+', ' ', candidate['query'].lower()
-            ).strip()
+        for item in candidates:
+            normalized = item["query"].lower()
 
             if normalized in seen:
                 continue
 
             seen.add(normalized)
+            unique_candidates.append(item)
 
-            queries.append({
-                'keywords': candidate['keywords'],
-                'query': candidate['query']
-            })
+        # Use TF-IDF to score candidate titles.
+        if unique_candidates:
+            documents = [
+                item["query"]
+                for item in unique_candidates
+            ]
 
-            if len(queries) == 5:
+            vectorizer = TfidfVectorizer(
+                stop_words="english",
+                ngram_range=(1, 2),
+                sublinear_tf=True
+            )
+
+            try:
+                matrix = vectorizer.fit_transform(documents)
+
+                for index, item in enumerate(unique_candidates):
+                    row = matrix.getrow(index)
+                    item["score"] = float(row.sum())
+
+            except ValueError:
+                for item in unique_candidates:
+                    item["score"] = 0.0
+
+        # Prefer informative titles over generic sentences.
+        generic_words = {
+            "what", "when", "where", "why", "how",
+            "this", "that", "these", "those",
+            "anyone", "everyone", "something"
+        }
+
+        for item in unique_candidates:
+            words = item["query"].lower().split()
+
+            meaningful = [
+                word for word in words
+                if word not in ENGLISH_STOP_WORDS
+                and word not in generic_words
+                and len(word) > 2
+            ]
+
+            item["score"] += min(len(meaningful), 6) * 0.1
+
+        unique_candidates.sort(
+            key=lambda item: item["score"],
+            reverse=True
+        )
+
+        # Select candidates from both platforms.
+        reddit_candidates = [
+            item for item in unique_candidates
+            if item["source"].lower() == "reddit"
+        ]
+
+        youtube_candidates = [
+            item for item in unique_candidates
+            if item["source"].lower() == "youtube"
+        ]
+
+        other_candidates = [
+            item for item in unique_candidates
+            if item["source"].lower() not in ("reddit", "youtube")
+        ]
+
+        selected = []
+        selected_queries = set()
+
+        # Alternate sources when both are available.
+        while len(selected) < 5:
+            added = False
+
+            for pool in (
+                reddit_candidates,
+                youtube_candidates,
+                other_candidates
+            ):
+                if not pool or len(selected) >= 5:
+                    continue
+
+                item = pool.pop(0)
+                key = item["query"].lower()
+
+                if key not in selected_queries:
+                    selected.append(item)
+                    selected_queries.add(key)
+                    added = True
+
+            if not added:
                 break
+
+        queries = [
+            {
+                "query": item["query"],
+                "keywords": item["keywords"],
+                "source": item["source"],
+                "original_title": item["title"]
+            }
+            for item in selected
+        ]
+
 
         
         return jsonify({
