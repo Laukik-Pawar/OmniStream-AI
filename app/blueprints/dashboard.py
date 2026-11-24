@@ -9,6 +9,7 @@ import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from app.services.topic_grouping import group_interactions
+from app.services.interest_extractor import extract_interests
 # from datetime import datetime
 # from zoneinfo import ZoneInfo
 
@@ -161,6 +162,7 @@ def experimental_queries():
 
         history = reddit_history + youtube_history
         topic_groups = group_interactions(history)
+        interest_profiles = extract_interests(topic_groups)
 
         # Use each interaction as its own document.
         
@@ -359,7 +361,7 @@ def experimental_queries():
                 }
                 for group in topic_groups
             ],
-
+            'interest_profiles': interest_profiles,
             'queries': queries
         })
 
