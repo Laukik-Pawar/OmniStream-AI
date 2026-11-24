@@ -8,6 +8,7 @@ from app.services.content_service import ContentService
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from app.services.topic_grouping import group_interactions
 # from datetime import datetime
 # from zoneinfo import ZoneInfo
 
@@ -159,7 +160,7 @@ def experimental_queries():
                 logging.exception('YouTube history fetch failed')
 
         history = reddit_history + youtube_history
-
+        topic_groups = group_interactions(history)
 
         # Use each interaction as its own document.
         
@@ -337,13 +338,31 @@ def experimental_queries():
 
 
         
+        
         return jsonify({
             'success': True,
             'source_count': len(history),
             'reddit_count': len(reddit_history),
             'youtube_count': len(youtube_history),
+            
+            'topic_groups': [
+                {
+                    'topic': group['topic'],
+                    'count': group['count'],
+                    'sources': group['sources'],
+                    'confidence': group['confidence'],
+                    'method': group['method'],
+                    'titles': [
+                        item.get('title', '')
+                        for item in group['interactions']
+                    ]
+                }
+                for group in topic_groups
+            ],
+
             'queries': queries
         })
+
 
 
     except ValueError as exc:
