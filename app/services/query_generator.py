@@ -1,174 +1,405 @@
 
 import re
+import logging
+
+import numpy as np
 
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
+from sklearn.metrics.pairwise import cosine_similarity
+
+from app.services.recommendation_engine import _embed_texts
+from app.services.interest_extractor import (
+    clean_interest_text,
+    phrase_analyzer
+)
 
 
-GENERIC_TERMS = {
+logger = logging.getLogger(__name__)
+
+
+NOISE_WORDS = {
     "peak", "guys", "finally", "just",
     "hope", "think", "ready", "incoming",
     "feature", "available", "day",
     "really", "damn", "thing", "things",
-    "experience", "ama", "passed", "passing",
-    "viral", "trending", "shorts"
+    "ama", "passed", "passing", "viral",
+    "trending", "shorts", "genuine",
+    "doubt", "read", "body", "does",
+    "mean", "later", "reason", "actual",
+    "properly", "w", "s", "m", "t",
+    "try", "trash", "interesting",
+    "subscribe", "follow", "comment"
 }
 
-STOPWORDS = set(ENGLISH_STOP_WORDS) | GENERIC_TERMS
+STOPWORDS = set(ENGLISH_STOP_WORDS) | NOISE_WORDS
 
 
-# General search-intent rules.
-# These are not user-specific interests.
 INTENT_RULES = [
     (
         {"certification", "certified", "exam",
          "architect", "cloudops"},
-        ["study guide", "practice questions", "tutorials"]
+        "study guide"
     ),
     (
         {"recipe", "recipes", "homemade",
-         "cooking", "sandwich"},
-        ["recipes", "cooking tips", "preparation"]
+         "cooking", "sandwich", "masala"},
+        "recipes"
     ),
     (
         {"game", "gaming", "gameplay",
          "console", "ps5", "xbox"},
-        ["gameplay", "updates", "guides"]
+        "gameplay updates"
     ),
     (
         {"song", "songs", "music", "lyrics",
          "lyrical", "soundtrack"},
-        ["similar songs", "music recommendations"]
+        "music recommendations"
     ),
     (
         {"pronunciation", "language",
-         "grammar", "iast", "learning"},
-        ["tutorials", "learning resources"]
+         "grammar", "iast", "transliteration",
+         "transliterations"},
+        "tutorials"
     ),
     (
         {"motorcycle", "bike", "car",
          "vehicle", "scooter"},
-        ["reviews", "comparisons", "owner experiences"]
+        "reviews"
     ),
     (
         {"food", "restaurant", "restaurants",
          "thali", "eating"},
-        ["food recommendations", "local food guide"]
+        "food recommendations"
     ),
     (
         {"workout", "fitness", "cardio",
          "weightloss", "fatloss"},
-        ["guides", "tips", "routines"]
+        "guides"
+    ),
+    (
+        {"fashion", "styling", "fashiontips",
+         "ootd"},
+        "style inspiration"
+    ),
+    (
+        {"movie", "film", "cinema", "box office"},
+        "updates"
+    ),
+    (
+        {"park", "coaster", "theme park"},
+        "visitor guide"
     )
 ]
 
 
 def clean_phrase(phrase):
-    """Remove conversational noise from interest phrases."""
 
     phrase = str(phrase or "").lower()
 
-    phrase = re.sub(r"https?://\S+", " ", phrase)
-    phrase = re.sub(r"[^\w\s-]", " ", phrase)
+    phrase = re.sub(
+        r"https?://\S+",
+        " ",
+        phrase
+    )
+
+    phrase = re.sub(
+        r"[^\w\s-]",
+        " ",
+        phrase
+    )
 
     words = [
         word for word in phrase.split()
         if word not in STOPWORDS
+        and len(word) > 1
     ]
 
     return " ".join(words).strip()
 
 
 def get_tokens(text):
+
     return set(
-        re.findall(r"(?u)\b[\w-]+\b", text.lower())
+        re.findall(
+            r"(?u)\b[\w-]+\b",
+            str(text).lower()
+        )
     )
 
 
-def select_intents(profile):
-    """Identify suitable discovery-oriented search intents."""
+def group_key(titles):
 
-    text = " ".join(
-        profile.get("interests", [])
-        + profile.get("titles", [])
+    return tuple(
+        sorted(str(title or "") for title in titles)
     )
 
-    tokens = get_tokens(text)
 
-    matches = []
+def valid_subject(subject):
 
-    for triggers, intents in INTENT_RULES:
+    words = subject.split()
 
-        overlap = len(tokens & triggers)
+    if len(words) < 2 or len(words) > 8:
+        return False
 
-        if overlap:
-            matches.append((overlap, intents))
+    if all(word.isnumeric() for word in words):
+        return False
 
-    if not matches:
-        return ["related content", "guide"]
+    if len(set(words)) < 2:
+        return False
 
-    matches.sort(
-        key=lambda item: item[0],
+    return True
+
+
+def select_intent(subject, context):
+
+    subject_tokens = get_tokens(subject)
+    context_tokens = get_tokens(context)
+
+    best_score = 0
+    best_intent = ""
+
+    for triggers, intent in INTENT_RULES:
+
+        score = (
+            3 * len(subject_tokens & triggers)
+            + len(context_tokens & triggers)
+        )
+
+        if score > best_score:
+
+            best_score = score
+            best_intent = intent
+
+    # Avoid meaningless generic suffixes.
+    return best_intent
+
+
+def build_candidates(profile, interactions):
+    """
+    Generate coherent candidate subjects from
+    individual source interactions.
+    """
+
+    candidates = []
+    seen = set()
+
+    def add_candidate(phrase, context, source, origin):
+
+        subject = clean_phrase(phrase)
+
+        if not valid_subject(subject):
+            return
+
+        key = (subject, context)
+
+        if key in seen:
+            return
+
+        seen.add(key)
+
+        candidates.append({
+            "subject": subject,
+            "context": context,
+            "source": source,
+            "origin": origin
+        })
+
+    for item in interactions:
+
+        title = clean_interest_text(
+            item.get("title")
+        )
+
+        content = clean_interest_text(
+            item.get("content")
+        )[:400]
+
+        subreddit = clean_interest_text(
+            item.get("subreddit")
+        )
+
+        genre = clean_interest_text(
+            item.get("native_genre")
+        )
+
+        source = item.get("source") or "unknown"
+
+        context = " ".join(
+            part for part in [
+                title,
+                content,
+                subreddit,
+                genre
+            ]
+            if part
+        )
+
+        if not context:
+            continue
+
+        title_tokens = get_tokens(title)
+
+        # Use extracted phrases only when they
+        # are supported by this individual title.
+        for phrase in profile.get("interests", []):
+
+            phrase_tokens = get_tokens(phrase)
+
+            if (
+                phrase_tokens
+                and phrase_tokens.issubset(title_tokens)
+            ):
+                add_candidate(
+                    phrase,
+                    context,
+                    source,
+                    "interest"
+                )
+
+        # Generate phrases independently from
+        # each title.
+        title_phrases = sorted(
+            set(phrase_analyzer(title)),
+            key=lambda phrase: (
+                len(phrase.split()),
+                len(phrase)
+            ),
+            reverse=True
+        )
+
+        for phrase in title_phrases[:15]:
+
+            add_candidate(
+                phrase,
+                context,
+                source,
+                "title"
+            )
+
+        # Recover context when titles are vague.
+        content_phrases = sorted(
+            set(phrase_analyzer(content)),
+            key=lambda phrase: (
+                len(phrase.split()),
+                len(phrase)
+            ),
+            reverse=True
+        )
+
+        for phrase in content_phrases[:20]:
+
+            add_candidate(
+                phrase,
+                context,
+                source,
+                "description"
+            )
+
+    return candidates
+
+
+def rank_candidates(candidates):
+    """
+    Rank subjects using semantic relevance
+    to their individual source contexts.
+    """
+
+    if not candidates:
+        return []
+
+    contexts = list(dict.fromkeys(
+        item["context"]
+        for item in candidates
+    ))
+
+    subjects = list(dict.fromkeys(
+        item["subject"]
+        for item in candidates
+    ))
+
+    context_index = {
+        text: index
+        for index, text in enumerate(contexts)
+    }
+
+    subject_index = {
+        text: index
+        for index, text in enumerate(subjects)
+    }
+
+    try:
+
+        embeddings = _embed_texts(
+            contexts + subjects
+        )
+
+        similarities = cosine_similarity(
+            embeddings[len(contexts):],
+            embeddings[:len(contexts)]
+        )
+
+        for item in candidates:
+
+            semantic = float(
+                np.clip(
+                    similarities[
+                        subject_index[item["subject"]],
+                        context_index[item["context"]]
+                    ],
+                    0,
+                    1
+                )
+            )
+
+            specificity = min(
+                len(item["subject"].split()) / 4,
+                1.0
+            )
+
+            origin_bonus = {
+                "interest": 0.10,
+                "title": 0.08,
+                "description": 0.0
+            }.get(item["origin"], 0.0)
+
+            item["score"] = (
+                0.8 * semantic
+                + 0.2 * specificity
+                + origin_bonus
+            )
+
+            item["semantic_score"] = semantic
+
+    except Exception:
+
+        logger.exception(
+            "Query candidate semantic scoring failed."
+        )
+
+        for item in candidates:
+
+            item["score"] = (
+                0.2 * min(
+                    len(item["subject"].split()) / 4,
+                    1.0
+                )
+                + (
+                    0.1
+                    if item["origin"] == "interest"
+                    else 0.0
+                )
+            )
+
+            item["semantic_score"] = None
+
+    return sorted(
+        candidates,
+        key=lambda item: item["score"],
         reverse=True
     )
 
-    return matches[0][1]
-
-
-def build_subject(profile, max_words=7):
-    """Construct a subject from related interest phrases."""
-
-    phrases = [
-        profile.get("topic", "")
-    ] + profile.get("interests", [])
-
-    cleaned = []
-
-    for phrase in phrases:
-
-        phrase = clean_phrase(phrase)
-
-        if phrase and phrase not in cleaned:
-            cleaned.append(phrase)
-
-    if not cleaned:
-        return ""
-
-    subject = cleaned[0]
-    used_words = get_tokens(subject)
-
-    # Add supporting phrases only when they share
-    # meaningful context with the existing subject.
-    for phrase in cleaned[1:]:
-
-        phrase_words = get_tokens(phrase)
-
-        if not phrase_words:
-            continue
-
-        if not used_words.intersection(phrase_words):
-            continue
-
-        new_words = phrase_words - used_words
-
-        if not new_words:
-            continue
-
-        if len(subject.split()) + len(new_words) > max_words:
-            continue
-
-        additions = [
-            word for word in phrase.split()
-            if word not in used_words
-        ]
-
-        subject += " " + " ".join(additions)
-        used_words.update(additions)
-
-    return subject.strip()
-
 
 def is_similar_query(query, existing_queries):
-    """Prevent highly overlapping search queries."""
 
     words = get_tokens(query)
 
@@ -181,9 +412,10 @@ def is_similar_query(query, existing_queries):
         if not union:
             continue
 
-        similarity = len(
-            words & existing_words
-        ) / len(union)
+        similarity = (
+            len(words & existing_words)
+            / len(union)
+        )
 
         if similarity >= 0.75:
             return True
@@ -191,11 +423,29 @@ def is_similar_query(query, existing_queries):
     return False
 
 
-def generate_queries(interest_profiles, max_queries=5):
+def generate_queries(
+    interest_profiles,
+    topic_groups,
+    max_queries=5
+):
     """
-    Generate personalized discovery queries from
-    ranked interest profiles.
+    Generate coherent discovery queries with
+    preference ranking and platform diversity.
     """
+
+    if max_queries <= 0:
+        return []
+
+    groups = {}
+
+    for group in topic_groups:
+
+        key = group_key([
+            item.get("title", "")
+            for item in group["interactions"]
+        ])
+
+        groups[key] = group["interactions"]
 
     ranked_profiles = sorted(
         interest_profiles,
@@ -206,64 +456,157 @@ def generate_queries(interest_profiles, max_queries=5):
         reverse=True
     )
 
-    queries = []
-    seen_queries = []
+    query_pool = []
 
-    # Generate one query per interest group
-    # before generating additional variants.
-    for profile in ranked_profiles:
+    # 1. Generate candidates per interest group.
+    for group_id, profile in enumerate(ranked_profiles):
 
-        subject = build_subject(profile)
-
-        if not subject:
+        # Exclude profiles outside the active
+        # preference windows.
+        if profile.get("preference_score", 0) <= 0:
             continue
 
-        # Skip weak, single-word subjects unless
-        # supported by multiple interactions.
-        if (
-            len(subject.split()) < 2
-            and profile.get("count", 0) < 2
-        ):
-            continue
+        key = group_key(
+            profile.get("titles", [])
+        )
 
-        intents = select_intents(profile)
+        interactions = groups.get(key, [])
 
-        for intent in intents:
+        candidates = build_candidates(
+            profile,
+            interactions
+        )
 
-            intent_words = get_tokens(intent)
-            subject_words = get_tokens(subject)
+        candidates = rank_candidates(candidates)
 
-            if intent_words.issubset(subject_words):
-                query = subject
-            else:
-                query = f"{subject} {intent}"
+        # Keep a few alternatives for diversity.
+        for candidate in candidates[:5]:
 
-            query = re.sub(
-                r"\s+", " ", query
-            ).strip()
+            semantic = candidate["semantic_score"]
 
-            if is_similar_query(query, seen_queries):
+            if semantic is not None and semantic < 0.35:
                 continue
 
-            queries.append({
+            subject = candidate["subject"]
+
+            intent = select_intent(
+                subject,
+                candidate["context"]
+            )
+
+            if (
+                intent
+                and not get_tokens(intent).issubset(
+                    get_tokens(subject)
+                )
+            ):
+                query = f"{subject} {intent}"
+
+            else:
+                query = subject
+
+            query_pool.append({
                 "query": query,
                 "keywords": subject.split(),
                 "topic": profile.get("topic", ""),
                 "interests": profile.get("interests", []),
                 "sources": profile.get("sources", []),
+                "source": candidate["source"],
                 "preference_score": profile.get(
                     "preference_score", 0
                 ),
+                "query_quality": round(
+                    candidate["score"], 4
+                ),
+                "semantic_score": (
+                    round(semantic, 4)
+                    if semantic is not None
+                    else None
+                ),
+                "origin": candidate["origin"],
                 "intent": intent,
-                "original_titles": profile.get("titles", [])
+                "original_titles": profile.get(
+                    "titles", []
+                ),
+                "group_id": group_id
             })
 
-            seen_queries.append(query)
+    # 2. Prioritize preferences, then query quality.
+    query_pool.sort(
+        key=lambda item: (
+            item["preference_score"],
+            item["query_quality"]
+        ),
+        reverse=True
+    )
 
-            # One query per group for diversity.
+    selected = []
+    selected_groups = set()
+    seen_queries = []
+
+    def add_query(candidate):
+
+        if len(selected) >= max_queries:
+            return False
+
+        if candidate["group_id"] in selected_groups:
+            return False
+
+        if is_similar_query(
+            candidate["query"],
+            seen_queries
+        ):
+            return False
+
+        selected.append(candidate)
+
+        selected_groups.add(
+            candidate["group_id"]
+        )
+
+        seen_queries.append(
+            candidate["query"]
+        )
+
+        return True
+
+    # 3. Select the strongest overall query.
+    if query_pool:
+
+        add_query(query_pool[0])
+
+    # 4. Reserve representation for both platforms
+    # when eligible candidates are available.
+    for platform in ["reddit", "youtube"]:
+
+        if any(
+            item["source"] == platform
+            for item in selected
+        ):
+            continue
+
+        for candidate in query_pool:
+
+            if candidate["source"] != platform:
+                continue
+
+            if add_query(candidate):
+                break
+
+    # 5. Fill remaining slots by preference.
+    for candidate in query_pool:
+
+        if len(selected) >= max_queries:
             break
 
-        if len(queries) >= max_queries:
-            break
+        add_query(candidate)
 
-    return queries
+    selected.sort(
+        key=lambda item: (
+            item["preference_score"],
+            item["query_quality"]
+        ),
+        reverse=True
+    )
+
+    return selected

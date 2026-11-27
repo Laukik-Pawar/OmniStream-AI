@@ -1,4 +1,4 @@
-
+from app.services.experimental_retrieval import retrieve_candidates
 from app.services.preference_weighting import weight_preferences
 from flask import Blueprint, jsonify, session, request
 from app.services.reddit_service import RedditService
@@ -174,8 +174,25 @@ def experimental_queries():
         interest_profiles = preference_results["profiles"]
         queries = generate_queries(
             interest_profiles,
+            topic_groups,
             max_queries=5
         )
+
+        ###
+        retrieval_results = {
+            "candidates": [],
+            "summary": {
+                "status": "not_requested"
+            }
+        }
+
+        if request.args.get("retrieve") == "1":
+
+            retrieval_results = retrieve_candidates(
+                queries,
+                results_per_query=10
+            )
+
         # Use each interaction as its own document.
         
         # STEP 11: Context-preserving query generation.
@@ -375,7 +392,9 @@ def experimental_queries():
             ],
             'interest_profiles': interest_profiles,
             'preference_summary': preference_results['summary'],
-            'queries': queries
+            'queries': queries,
+            'candidate_recommendations': retrieval_results['candidates'],
+            'retrieval_summary': retrieval_results['summary']
         })
 
 
