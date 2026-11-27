@@ -1,4 +1,5 @@
 from app.services.experimental_retrieval import retrieve_candidates
+from app.services.experimental_filtering import filter_candidates
 from app.services.experimental_reranking import rerank_candidates
 from app.services.preference_weighting import weight_preferences
 from flask import Blueprint, jsonify, session, request
@@ -134,9 +135,13 @@ def ingest_reddit():
 
 
 
+
 @dashboard_bp.route('/experimental/queries', methods=['GET'])
 def experimental_queries():
-    """Generate lightweight, interaction-based search queries."""
+    """Generate, retrieve, rank and filter personalized content."""
+
+    import logging
+
     if 'reddit_credentials' not in session:
         return jsonify({
             'success': False,
@@ -144,14 +149,16 @@ def experimental_queries():
         }), 401
 
     try:
-        import re
-        import logging
-        from sklearn.feature_extraction.text import TfidfVectorizer
+        # 1. Fetch Reddit interaction history.
+        reddit_service = RedditService(
+            session['reddit_credentials']
+        )
 
-        
-        reddit_service = RedditService(session['reddit_credentials'])
-        reddit_history = reddit_service.fetch_history(limit=15) or []
+        reddit_history = (
+            reddit_service.fetch_history(limit=15) or []
+        )
 
+        # 2. Fetch YouTube interaction history.
         youtube_history = []
 
         if session.get('youtube_credentials'):
@@ -160,26 +167,35 @@ def experimental_queries():
                     session['youtube_credentials'],
                     limit=15
                 ) or []
+
             except Exception:
                 logging.exception('YouTube history fetch failed')
 
+        # 3. Combine interaction history.
         history = reddit_history + youtube_history
+
+        # 4. Semantic topic grouping.
         topic_groups = group_interactions(history)
+
+        # 5. Extract user interests.
         interest_profiles = extract_interests(topic_groups)
 
+        # 6. Apply recent and long-term preference weighting.
         preference_results = weight_preferences(
             topic_groups,
             interest_profiles
         )
 
         interest_profiles = preference_results["profiles"]
+
+        # 7. Generate personalized search queries.
         queries = generate_queries(
             interest_profiles,
             topic_groups,
             max_queries=5
         )
 
-        ###
+        # 8. Initialize retrieval results.
         retrieval_results = {
             "candidates": [],
             "summary": {
@@ -187,6 +203,15 @@ def experimental_queries():
             }
         }
 
+        # 9. Initialize filtering results.
+        filtering_results = {
+            "summary": {
+                "status": "not_requested"
+            },
+            "removed_candidates": []
+        }
+
+        # 10. Retrieve content using Google CSE.
         if request.args.get("retrieve") == "1":
 
             retrieval_results = retrieve_candidates(
@@ -194,6 +219,7 @@ def experimental_queries():
                 results_per_query=10
             )
 
+            # 11. Apply semantic reranking.
             if request.args.get("rerank") == "1":
 
                 retrieval_results["candidates"] = (
@@ -202,189 +228,25 @@ def experimental_queries():
                     )
                 )
 
-        # Use each interaction as its own document.
-        
-        # STEP 11: Context-preserving query generation.
-        # Use TF-IDF to identify useful interactions, but
-        # preserve title phrases when constructing queries.
+                # 12. Remove duplicate and consumed content.
+                if request.args.get("filter") == "1":
 
-        # import re
-        # from sklearn.feature_extraction.text import (
-        #     TfidfVectorizer,
-        #     ENGLISH_STOP_WORDS
-        # )
+                    filtering_results = filter_candidates(
+                        retrieval_results["candidates"],
+                        history
+                    )
 
-        # def clean_title(title):
-        #     title = str(title or "")
+                    retrieval_results["candidates"] = (
+                        filtering_results["candidates"]
+                    )
 
-        #     # Convert hashtags into searchable words.
-        #     title = re.sub(r"#(?=\w)", " ", title)
-
-        #     # Remove URLs, emojis and unnecessary punctuation.
-        #     title = re.sub(r"https?://\S+", " ", title)
-        #     title = re.sub(r"[^\w\s'-]", " ", title)
-
-        #     # Remove common conversational filler.
-        #     filler = {
-        #         "guys", "please", "hey", "omg", "lol",
-        #         "official", "viral", "new", "latest"
-        #     }
-
-        #     words = [
-        #         word for word in title.split()
-        #         if word.lower() not in filler
-        #     ]
-
-        #     return " ".join(words).strip()
-
-        # # Build one candidate per interaction.
-        # candidates = []
-
-        # for item in history:
-        #     title = clean_title(item.get("title"))
-        #     source = item.get("source", "unknown")
-
-        #     if not title:
-        #         continue
-
-        #     words = title.split()
-
-        #     # Reject extremely short or generic titles.
-        #     if len(words) < 2:
-        #         continue
-
-        #     # Keep the title's word order and context.
-        #     query = " ".join(words[:10])
-
-        #     candidates.append({
-        #         "query": query,
-        #         "keywords": words[:10],
-        #         "source": source,
-        #         "title": item.get("title", "")
-        #     })
-
-        # # Remove exact duplicate queries.
-        # unique_candidates = []
-        # seen = set()
-
-        # for item in candidates:
-        #     normalized = item["query"].lower()
-
-        #     if normalized in seen:
-        #         continue
-
-        #     seen.add(normalized)
-        #     unique_candidates.append(item)
-
-        # # Use TF-IDF to score candidate titles.
-        # if unique_candidates:
-        #     documents = [
-        #         item["query"]
-        #         for item in unique_candidates
-        #     ]
-
-        #     vectorizer = TfidfVectorizer(
-        #         stop_words="english",
-        #         ngram_range=(1, 2),
-        #         sublinear_tf=True
-        #     )
-
-        #     try:
-        #         matrix = vectorizer.fit_transform(documents)
-
-        #         for index, item in enumerate(unique_candidates):
-        #             row = matrix.getrow(index)
-        #             item["score"] = float(row.sum())
-
-        #     except ValueError:
-        #         for item in unique_candidates:
-        #             item["score"] = 0.0
-
-        # # Prefer informative titles over generic sentences.
-        # generic_words = {
-        #     "what", "when", "where", "why", "how",
-        #     "this", "that", "these", "those",
-        #     "anyone", "everyone", "something"
-        # }
-
-        # for item in unique_candidates:
-        #     words = item["query"].lower().split()
-
-        #     meaningful = [
-        #         word for word in words
-        #         if word not in ENGLISH_STOP_WORDS
-        #         and word not in generic_words
-        #         and len(word) > 2
-        #     ]
-
-        #     item["score"] += min(len(meaningful), 6) * 0.1
-
-        # unique_candidates.sort(
-        #     key=lambda item: item["score"],
-        #     reverse=True
-        # )
-
-        # # Select candidates from both platforms.
-        # reddit_candidates = [
-        #     item for item in unique_candidates
-        #     if item["source"].lower() == "reddit"
-        # ]
-
-        # youtube_candidates = [
-        #     item for item in unique_candidates
-        #     if item["source"].lower() == "youtube"
-        # ]
-
-        # other_candidates = [
-        #     item for item in unique_candidates
-        #     if item["source"].lower() not in ("reddit", "youtube")
-        # ]
-
-        # selected = []
-        # selected_queries = set()
-
-        # # Alternate sources when both are available.
-        # while len(selected) < 5:
-        #     added = False
-
-        #     for pool in (
-        #         reddit_candidates,
-        #         youtube_candidates,
-        #         other_candidates
-        #     ):
-        #         if not pool or len(selected) >= 5:
-        #             continue
-
-        #         item = pool.pop(0)
-        #         key = item["query"].lower()
-
-        #         if key not in selected_queries:
-        #             selected.append(item)
-        #             selected_queries.add(key)
-        #             added = True
-
-        #     if not added:
-        #         break
-
-        # queries = [
-        #     {
-        #         "query": item["query"],
-        #         "keywords": item["keywords"],
-        #         "source": item["source"],
-        #         "original_title": item["title"]
-        #     }
-        #     for item in selected
-        # ]
-
-
-        
-        
+        # 13. Return complete experimental results.
         return jsonify({
             'success': True,
             'source_count': len(history),
             'reddit_count': len(reddit_history),
             'youtube_count': len(youtube_history),
-            
+
             'topic_groups': [
                 {
                     'topic': group['topic'],
@@ -399,14 +261,29 @@ def experimental_queries():
                 }
                 for group in topic_groups
             ],
+
             'interest_profiles': interest_profiles,
+
             'preference_summary': preference_results['summary'],
+
             'queries': queries,
-            'candidate_recommendations': retrieval_results['candidates'],
-            'retrieval_summary': retrieval_results['summary']
+
+            'candidate_recommendations': (
+                retrieval_results['candidates']
+            ),
+
+            'retrieval_summary': (
+                retrieval_results['summary']
+            ),
+
+            'filtering_summary': (
+                filtering_results['summary']
+            ),
+
+            'removed_candidates': (
+                filtering_results['removed_candidates']
+            )
         })
-
-
 
     except ValueError as exc:
         return jsonify({
@@ -416,6 +293,7 @@ def experimental_queries():
 
     except Exception:
         logging.exception('Experimental query preview failed')
+
         return jsonify({
             'success': False,
             'error': 'Unable to generate query preview.'
