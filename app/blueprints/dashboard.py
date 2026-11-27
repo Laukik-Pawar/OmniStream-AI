@@ -11,6 +11,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from app.services.topic_grouping import group_interactions
 from app.services.interest_extractor import extract_interests
+from app.services.query_generator import generate_queries
 # from datetime import datetime
 # from zoneinfo import ZoneInfo
 
@@ -171,179 +172,183 @@ def experimental_queries():
         )
 
         interest_profiles = preference_results["profiles"]
+        queries = generate_queries(
+            interest_profiles,
+            max_queries=5
+        )
         # Use each interaction as its own document.
         
         # STEP 11: Context-preserving query generation.
         # Use TF-IDF to identify useful interactions, but
         # preserve title phrases when constructing queries.
 
-        import re
-        from sklearn.feature_extraction.text import (
-            TfidfVectorizer,
-            ENGLISH_STOP_WORDS
-        )
+        # import re
+        # from sklearn.feature_extraction.text import (
+        #     TfidfVectorizer,
+        #     ENGLISH_STOP_WORDS
+        # )
 
-        def clean_title(title):
-            title = str(title or "")
+        # def clean_title(title):
+        #     title = str(title or "")
 
-            # Convert hashtags into searchable words.
-            title = re.sub(r"#(?=\w)", " ", title)
+        #     # Convert hashtags into searchable words.
+        #     title = re.sub(r"#(?=\w)", " ", title)
 
-            # Remove URLs, emojis and unnecessary punctuation.
-            title = re.sub(r"https?://\S+", " ", title)
-            title = re.sub(r"[^\w\s'-]", " ", title)
+        #     # Remove URLs, emojis and unnecessary punctuation.
+        #     title = re.sub(r"https?://\S+", " ", title)
+        #     title = re.sub(r"[^\w\s'-]", " ", title)
 
-            # Remove common conversational filler.
-            filler = {
-                "guys", "please", "hey", "omg", "lol",
-                "official", "viral", "new", "latest"
-            }
+        #     # Remove common conversational filler.
+        #     filler = {
+        #         "guys", "please", "hey", "omg", "lol",
+        #         "official", "viral", "new", "latest"
+        #     }
 
-            words = [
-                word for word in title.split()
-                if word.lower() not in filler
-            ]
+        #     words = [
+        #         word for word in title.split()
+        #         if word.lower() not in filler
+        #     ]
 
-            return " ".join(words).strip()
+        #     return " ".join(words).strip()
 
-        # Build one candidate per interaction.
-        candidates = []
+        # # Build one candidate per interaction.
+        # candidates = []
 
-        for item in history:
-            title = clean_title(item.get("title"))
-            source = item.get("source", "unknown")
+        # for item in history:
+        #     title = clean_title(item.get("title"))
+        #     source = item.get("source", "unknown")
 
-            if not title:
-                continue
+        #     if not title:
+        #         continue
 
-            words = title.split()
+        #     words = title.split()
 
-            # Reject extremely short or generic titles.
-            if len(words) < 2:
-                continue
+        #     # Reject extremely short or generic titles.
+        #     if len(words) < 2:
+        #         continue
 
-            # Keep the title's word order and context.
-            query = " ".join(words[:10])
+        #     # Keep the title's word order and context.
+        #     query = " ".join(words[:10])
 
-            candidates.append({
-                "query": query,
-                "keywords": words[:10],
-                "source": source,
-                "title": item.get("title", "")
-            })
+        #     candidates.append({
+        #         "query": query,
+        #         "keywords": words[:10],
+        #         "source": source,
+        #         "title": item.get("title", "")
+        #     })
 
-        # Remove exact duplicate queries.
-        unique_candidates = []
-        seen = set()
+        # # Remove exact duplicate queries.
+        # unique_candidates = []
+        # seen = set()
 
-        for item in candidates:
-            normalized = item["query"].lower()
+        # for item in candidates:
+        #     normalized = item["query"].lower()
 
-            if normalized in seen:
-                continue
+        #     if normalized in seen:
+        #         continue
 
-            seen.add(normalized)
-            unique_candidates.append(item)
+        #     seen.add(normalized)
+        #     unique_candidates.append(item)
 
-        # Use TF-IDF to score candidate titles.
-        if unique_candidates:
-            documents = [
-                item["query"]
-                for item in unique_candidates
-            ]
+        # # Use TF-IDF to score candidate titles.
+        # if unique_candidates:
+        #     documents = [
+        #         item["query"]
+        #         for item in unique_candidates
+        #     ]
 
-            vectorizer = TfidfVectorizer(
-                stop_words="english",
-                ngram_range=(1, 2),
-                sublinear_tf=True
-            )
+        #     vectorizer = TfidfVectorizer(
+        #         stop_words="english",
+        #         ngram_range=(1, 2),
+        #         sublinear_tf=True
+        #     )
 
-            try:
-                matrix = vectorizer.fit_transform(documents)
+        #     try:
+        #         matrix = vectorizer.fit_transform(documents)
 
-                for index, item in enumerate(unique_candidates):
-                    row = matrix.getrow(index)
-                    item["score"] = float(row.sum())
+        #         for index, item in enumerate(unique_candidates):
+        #             row = matrix.getrow(index)
+        #             item["score"] = float(row.sum())
 
-            except ValueError:
-                for item in unique_candidates:
-                    item["score"] = 0.0
+        #     except ValueError:
+        #         for item in unique_candidates:
+        #             item["score"] = 0.0
 
-        # Prefer informative titles over generic sentences.
-        generic_words = {
-            "what", "when", "where", "why", "how",
-            "this", "that", "these", "those",
-            "anyone", "everyone", "something"
-        }
+        # # Prefer informative titles over generic sentences.
+        # generic_words = {
+        #     "what", "when", "where", "why", "how",
+        #     "this", "that", "these", "those",
+        #     "anyone", "everyone", "something"
+        # }
 
-        for item in unique_candidates:
-            words = item["query"].lower().split()
+        # for item in unique_candidates:
+        #     words = item["query"].lower().split()
 
-            meaningful = [
-                word for word in words
-                if word not in ENGLISH_STOP_WORDS
-                and word not in generic_words
-                and len(word) > 2
-            ]
+        #     meaningful = [
+        #         word for word in words
+        #         if word not in ENGLISH_STOP_WORDS
+        #         and word not in generic_words
+        #         and len(word) > 2
+        #     ]
 
-            item["score"] += min(len(meaningful), 6) * 0.1
+        #     item["score"] += min(len(meaningful), 6) * 0.1
 
-        unique_candidates.sort(
-            key=lambda item: item["score"],
-            reverse=True
-        )
+        # unique_candidates.sort(
+        #     key=lambda item: item["score"],
+        #     reverse=True
+        # )
 
-        # Select candidates from both platforms.
-        reddit_candidates = [
-            item for item in unique_candidates
-            if item["source"].lower() == "reddit"
-        ]
+        # # Select candidates from both platforms.
+        # reddit_candidates = [
+        #     item for item in unique_candidates
+        #     if item["source"].lower() == "reddit"
+        # ]
 
-        youtube_candidates = [
-            item for item in unique_candidates
-            if item["source"].lower() == "youtube"
-        ]
+        # youtube_candidates = [
+        #     item for item in unique_candidates
+        #     if item["source"].lower() == "youtube"
+        # ]
 
-        other_candidates = [
-            item for item in unique_candidates
-            if item["source"].lower() not in ("reddit", "youtube")
-        ]
+        # other_candidates = [
+        #     item for item in unique_candidates
+        #     if item["source"].lower() not in ("reddit", "youtube")
+        # ]
 
-        selected = []
-        selected_queries = set()
+        # selected = []
+        # selected_queries = set()
 
-        # Alternate sources when both are available.
-        while len(selected) < 5:
-            added = False
+        # # Alternate sources when both are available.
+        # while len(selected) < 5:
+        #     added = False
 
-            for pool in (
-                reddit_candidates,
-                youtube_candidates,
-                other_candidates
-            ):
-                if not pool or len(selected) >= 5:
-                    continue
+        #     for pool in (
+        #         reddit_candidates,
+        #         youtube_candidates,
+        #         other_candidates
+        #     ):
+        #         if not pool or len(selected) >= 5:
+        #             continue
 
-                item = pool.pop(0)
-                key = item["query"].lower()
+        #         item = pool.pop(0)
+        #         key = item["query"].lower()
 
-                if key not in selected_queries:
-                    selected.append(item)
-                    selected_queries.add(key)
-                    added = True
+        #         if key not in selected_queries:
+        #             selected.append(item)
+        #             selected_queries.add(key)
+        #             added = True
 
-            if not added:
-                break
+        #     if not added:
+        #         break
 
-        queries = [
-            {
-                "query": item["query"],
-                "keywords": item["keywords"],
-                "source": item["source"],
-                "original_title": item["title"]
-            }
-            for item in selected
-        ]
+        # queries = [
+        #     {
+        #         "query": item["query"],
+        #         "keywords": item["keywords"],
+        #         "source": item["source"],
+        #         "original_title": item["title"]
+        #     }
+        #     for item in selected
+        # ]
 
 
         
