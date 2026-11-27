@@ -1,4 +1,5 @@
 from app.services.experimental_retrieval import retrieve_candidates
+from app.services.experimental_reranking import rerank_candidates
 from app.services.preference_weighting import weight_preferences
 from flask import Blueprint, jsonify, session, request
 from app.services.reddit_service import RedditService
@@ -192,6 +193,14 @@ def experimental_queries():
                 queries,
                 results_per_query=10
             )
+
+            if request.args.get("rerank") == "1":
+
+                retrieval_results["candidates"] = (
+                    rerank_candidates(
+                        retrieval_results["candidates"]
+                    )
+                )
 
         # Use each interaction as its own document.
         
