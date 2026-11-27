@@ -1,4 +1,5 @@
 
+from app.services.preference_weighting import weight_preferences
 from flask import Blueprint, jsonify, session, request
 from app.services.reddit_service import RedditService
 from app.services.youtube_service import YouTubeService
@@ -164,6 +165,12 @@ def experimental_queries():
         topic_groups = group_interactions(history)
         interest_profiles = extract_interests(topic_groups)
 
+        preference_results = weight_preferences(
+            topic_groups,
+            interest_profiles
+        )
+
+        interest_profiles = preference_results["profiles"]
         # Use each interaction as its own document.
         
         # STEP 11: Context-preserving query generation.
@@ -362,6 +369,7 @@ def experimental_queries():
                 for group in topic_groups
             ],
             'interest_profiles': interest_profiles,
+            'preference_summary': preference_results['summary'],
             'queries': queries
         })
 
